@@ -1,7 +1,7 @@
 # Budget exception: one complete upgrade/downgrade/re-upgrade traversal per DB
-# covers the single external-login revision. Per dialect: 17 invalid storage
-# writes, 3 incompatible credential states, 4 isolated evidence guards and
-# 1 restored legacy mail-kind check (25 rejection inputs; 50 across both DBs).
+# covers the single 0.1.4 release revision. Per dialect: 17 invalid storage
+# writes, 3 incompatible credential states, 5 isolated downgrade guards and
+# 1 restored legacy mail-kind check (26 rejection inputs; 52 across both DBs).
 # Each constraint/table can break independently; SQLite CHECK/FK rebuilds and
 # PostgreSQL transactional DDL require real DBs, within the same traversal.
 import os
@@ -16,25 +16,47 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session
 
 from backend.app.bootstrap import resolve_alembic_ini, resolve_migrations_dir
 from backend.models import Base
+from backend.models.change import ChangeOperation, ChangeSet
 from backend.models.workspace import Workspace, WorkspaceMembership
 from backend.services.ops.input_maintenance import audit_inputs
 
-PARENT = "5c3395a75eb0"
-REVISION = "da94025713de"
+PARENT = "19db79d3e622"
+REVISION = "eb86fdacb1bb"
+POINTER = "personal_workspace_id"
+DELETION_COLUMNS = {
+    "deletion_requested_at",
+    "purge_after",
+    "deletion_retention_days",
+    "deletion_prior_status",
+    "deletion_failure_count",
+    "deletion_last_error",
+}
+HOLD_COLUMN = "account_deletion_user_id"
+# Nonunique lookup indexes the release adds, by table.
+RELEASE_INDEXES = {
+    "change_operation": ("ix_change_operation_change_set_id", ["change_set_id"]),
+    "review_decision": (
+        "ix_review_decision_review_created_id",
+        ["review_item_id", "created_at", "id"],
+    ),
+    "users": ("ix_users_purge_after", ["purge_after"]),
+    "workspace": ("ix_workspace_account_deletion_user_id", [HOLD_COLUMN]),
+}
 
 
 @pytest.mark.parametrize(
     "dialect",
     ["sqlite", pytest.param("postgresql", marks=pytest.mark.xdist_group("postgres"))],
 )
-def test_external_login_upgrade_downgrade_reupgrade(tmp_path, dialect):
+def test_release_0_1_4_upgrade_downgrade_reupgrade(tmp_path, dialect):
     """One traversal per dialect covers data, defaults, constraints and refusal."""
 
     database_url = (
-        f"sqlite+pysqlite:///{tmp_path / 'external-login.db'}"
+        f"sqlite+pysqlite:///{tmp_path / 'release-0-1-4.db'}"
         if dialect == "sqlite"
         else os.getenv("DTXWIKI_POSTGRES_MIGRATION_TEST_DATABASE_URL")
     )
@@ -87,7 +109,14 @@ def test_external_login_upgrade_downgrade_reupgrade(tmp_path, dialect):
             for name in ("users", "user_identities", "auth_login_transactions")
         )
 
+    change_operations = sa.select(ChangeOperation.__table__).order_by(
+        ChangeOperation.id
+    )
+
     def retained_account_state(connection):
+        # Reflected: the release adds a workspace column, so compare the
+        # columns the parent already had.
+        workspace = sa.Table("workspace", sa.MetaData(), autoload_with=connection)
         return (
             connection.execute(
                 sa.select(
@@ -97,20 +126,76 @@ def test_external_login_upgrade_downgrade_reupgrade(tmp_path, dialect):
                     users.c.default_workspace_id,
                 ).where(users.c.id == existing_id)
             ).one(),
-            # Reflected: the current model maps workspace columns added later.
             connection.execute(
-                sa.select(
-                    sa.Table("workspace", sa.MetaData(), autoload_with=connection)
-                )
+                sa.select(*(workspace.c[name] for name in parent_workspace_columns))
             ).all(),
             connection.execute(sa.select(WorkspaceMembership.__table__)).all(),
+            connection.execute(change_operations).all(),
         )
+
+    def assert_release_shape(released):
+        inspector = inspect(engine)
+        user_columns = {
+            column["name"]: column for column in inspector.get_columns("users")
+        }
+        assert (POINTER in user_columns) is not released
+        assert (DELETION_COLUMNS <= user_columns.keys()) is released
+        assert DELETION_COLUMNS.isdisjoint(user_columns) is not released
+        assert (
+            HOLD_COLUMN
+            in {column["name"] for column in inspector.get_columns("workspace")}
+        ) is released
+        for table, (name, columns) in RELEASE_INDEXES.items():
+            indexes = {index["name"]: index for index in inspector.get_indexes(table)}
+            assert (name in indexes) is released
+            if released:
+                assert indexes[name]["column_names"] == columns
+                assert not indexes[name]["unique"]
+        if released:
+            assert all(user_columns[name]["nullable"] for name in DELETION_COLUMNS)
+            assert all(
+                user_columns[name]["default"] is None for name in DELETION_COLUMNS
+            )
+        else:
+            # The restored pointer is nullable, unique and never guessed back.
+            assert user_columns[POINTER]["nullable"]
+            pointer_fk = next(
+                fk
+                for fk in inspector.get_foreign_keys("users")
+                if fk["constrained_columns"] == [POINTER]
+            )
+            assert pointer_fk["referred_table"] == "workspace"
+            assert pointer_fk["options"].get("ondelete") == "SET NULL"
+            assert (POINTER,) in {
+                tuple(constraint["column_names"])
+                for constraint in inspector.get_unique_constraints("users")
+            }
+            with engine.connect() as connection:
+                assert not connection.scalar(
+                    sa.text(f"SELECT count(*) FROM users WHERE {POINTER} IS NOT NULL")
+                )
+        with engine.connect() as connection:
+            assert connection.scalar(
+                sa.text("SELECT version_num FROM alembic_version")
+            ) == (REVISION if released else PARENT)
+            if dialect == "sqlite" and released:
+                plan = connection.execute(
+                    sa.text(
+                        "EXPLAIN QUERY PLAN SELECT * FROM change_operation "
+                        "WHERE change_set_id = :change_set_id"
+                    ),
+                    {"change_set_id": change_set_id.hex},
+                ).all()
+                assert RELEASE_INDEXES["change_operation"][0] in str(plan), plan
 
     upgraded = False
     try:
         command.upgrade(config, PARENT)
         upgraded = True
         users = sa.Table("users", sa.MetaData(), autoload_with=engine)
+        parent_workspace_columns = [
+            column["name"] for column in inspect(engine).get_columns("workspace")
+        ]
         with engine.begin() as connection:
             connection.execute(
                 Workspace.__table__.insert(),
@@ -145,6 +230,10 @@ def test_external_login_upgrade_downgrade_reupgrade(tmp_path, dialect):
                     "role": "owner",
                 },
             )
+            # The current model no longer maps the pointer, so set it in SQL.
+            connection.execute(
+                sa.text(f"UPDATE users SET {POINTER} = default_workspace_id")
+            )
             outbox = sa.Table("email_outbox", sa.MetaData(), autoload_with=connection)
             connection.execute(
                 outbox.insert(),
@@ -159,11 +248,43 @@ def test_external_login_upgrade_downgrade_reupgrade(tmp_path, dialect):
                     "updated_at": now,
                 },
             )
+        with Session(engine) as session, session.begin():
+            change_set = ChangeSet(
+                workspace_id=workspace_id, trigger_type="manual", actor_type="human"
+            )
+            session.add(change_set)
+            session.flush()
+            change_set_id = change_set.id
+            # Two operations for one parent exercise the real nonunique-index
+            # requirement: a mistakenly unique index must fail on this data.
+            session.add_all(
+                ChangeOperation(
+                    workspace_id=workspace_id,
+                    change_set_id=change_set_id,
+                    target_type="context_page",
+                    target_id=uuid4(),
+                    operation="update",
+                    diff_summary=f"Existing operation {number}",
+                )
+                for number in range(2)
+            )
+        with engine.connect() as connection:
             retained = retained_account_state(connection)
+            assert connection.scalar(sa.text(f"SELECT {POINTER} FROM users"))
+        assert len(retained[3]) == 2
         command.upgrade(config, REVISION)
+        assert_release_shape(True)
         users, identities, transactions = _tables()
         with engine.connect() as connection:
             assert retained_account_state(connection) == retained
+            # Existing users stay active and have no deletion deadline.
+            assert connection.execute(
+                sa.select(
+                    users.c.deletion_requested_at,
+                    users.c.purge_after,
+                    users.c.deletion_retention_days,
+                ).where(users.c.id == existing_id)
+            ).one() == (None, None, None)
         identity = {
             "id": _id(),
             "user_id": external_id,
@@ -360,20 +481,14 @@ def test_external_login_upgrade_downgrade_reupgrade(tmp_path, dialect):
         def assert_downgrade_refused(message):
             with pytest.raises(RuntimeError, match=message):
                 command.downgrade(config, PARENT)
-            # Every guard belongs to the same revision and must preserve the
+            # Every guard runs before the first DDL and must preserve the
             # complete schema, including tables created later in upgrade().
             inspector = inspect(engine)
             assert auth_tables <= set(inspector.get_table_names())
             assert "reauthentication_challenge_id" in {
                 column["name"] for column in inspector.get_columns("email_outbox")
             }
-            with engine.connect() as connection:
-                assert (
-                    connection.scalar(
-                        sa.text("SELECT version_num FROM alembic_version")
-                    )
-                    == REVISION
-                )
+            assert_release_shape(True)
 
         # Each nullable credential/pending-email state has a distinct refusal.
         for credentials in (
@@ -435,7 +550,34 @@ def test_external_login_upgrade_downgrade_reupgrade(tmp_path, dialect):
             with engine.begin() as connection:
                 connection.execute(table.delete())
 
+        # Only a pending deletion remains: its deadline must not be discarded.
+        pending_deletion = {
+            "status": "deletion_pending",
+            "deletion_requested_at": now,
+            "purge_after": now + timedelta(days=30),
+            "deletion_retention_days": 30,
+        }
+        with engine.begin() as connection:
+            connection.execute(
+                users.update()
+                .where(users.c.id == existing_id)
+                .values(**pending_deletion)
+            )
+        assert_downgrade_refused("deletion requests are pending")
+        with engine.begin() as connection:
+            pending = connection.execute(
+                sa.select(users).where(users.c.id == existing_id)
+            ).one()
+            assert pending.deletion_retention_days == 30
+            assert pending.purge_after - pending.deletion_requested_at == timedelta(
+                days=30
+            )
+            connection.execute(
+                users.update().where(users.c.id == existing_id).values(status="active")
+            )
+
         command.downgrade(config, PARENT)
+        assert_release_shape(False)
         assert (auth_tables - {"users", "email_outbox"}).isdisjoint(
             inspect(engine).get_table_names()
         )
@@ -445,7 +587,6 @@ def test_external_login_upgrade_downgrade_reupgrade(tmp_path, dialect):
         assert not columns["email"]["nullable"]
         assert not columns["password_hash"]["nullable"]
         assert "pending_email" not in columns
-        assert "personal_workspace_id" not in columns
         old_outbox = sa.Table("email_outbox", sa.MetaData(), autoload_with=engine)
         assert "reauthentication_challenge_id" not in old_outbox.c
         with engine.begin() as connection:
@@ -461,6 +602,7 @@ def test_external_login_upgrade_downgrade_reupgrade(tmp_path, dialect):
                     },
                 )
         command.upgrade(config, REVISION)
+        assert_release_shape(True)
         assert audit_inputs(database_url) == []
         users, identities, transactions = _tables()
         with engine.begin() as connection:
@@ -496,9 +638,7 @@ def test_external_login_upgrade_downgrade_reupgrade(tmp_path, dialect):
             )
         if dialect == "postgresql":
             # SQLite model parity is already checked by the shared release
-            # head test. PostgreSQL types/constraints need this real DB, at
-            # head because later revisions add their own user columns.
-            command.upgrade(config, "head")
+            # head test. PostgreSQL types/constraints need this real DB.
             with engine.connect() as connection:
                 context = MigrationContext.configure(
                     connection, opts={"include_object": include_auth_object}
@@ -527,6 +667,12 @@ def test_external_login_upgrade_downgrade_reupgrade(tmp_path, dialect):
                     if "pending_email" in columns:
                         predicate += " OR pending_email IS NOT NULL"
                     connection.execute(sa.text("DELETE FROM users WHERE " + predicate))
+                    connection.execute(
+                        sa.text(
+                            "UPDATE users SET status = 'active' "
+                            "WHERE status = 'deletion_pending'"
+                        )
+                    )
                 command.downgrade(config, "base")
                 with engine.begin() as connection:
                     connection.execute(sa.text("DROP TABLE IF EXISTS alembic_version"))

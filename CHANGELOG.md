@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-### Fixes
+## 0.1.4
+
+### Accounts and workspaces
 
 - Users can delete their account, and server administrators can delete any
   account. Access ends immediately; the account is removed after a
@@ -20,6 +22,9 @@
 - Account cleanup preserves documents, submitted drafts, attachments, and
   conversation history in other workspaces, and deletes unsubmitted private
   edits.
+
+### External login and account security
+
 - Show email sign-in before external providers. User search groups its controls
   and continuous account rows in one Settings panel, with ID copying beneath the
   email and recovery in an account menu. Workspace members
@@ -55,6 +60,11 @@
   revokes sessions, pending challenges, and API/OAuth credentials.
 - Plugin provisioning returns constrained membership requests; worker handlers use
   typed public inputs and results instead of core database/runtime objects.
+
+### Operations and MCP
+
+- Server administrators can check for a newer dtxWiki version in Settings
+  and see upgrade guidance for the detected installation method.
 - Skip periodic bundle expiration, media recovery/GC, and credential replica
   jobs when their read-only checks find no work. Registration cadence stays
   unchanged; a failed check still registers the repair job. Gradually remove
@@ -66,6 +76,9 @@
 - Apply MCP Access Key workspace edits to existing streamable MCP sessions
   on the next request instead of keeping the workspaces granted at
   initialize.
+
+### Review and publication
+
 - Review evidence now distinguishes the current document destination from the
   exact reviewed Context version and its comparison baseline. Group approvals
   use a fixed, signed selection and preserve individual results across batches;
@@ -113,6 +126,8 @@
   previews when confirming, and compare draft parents independently of the
   published version's diff limit.
 
+### Lint and editing
+
 - Overlays can pass explicit lint modules to `assemble(lint_modules=...)`.
   Writers and readers share that container's registry. Workers passed the same
   `services` use it too; standalone CLI worker processes build their own builtin
@@ -132,6 +147,9 @@
   precedence when both the base and save-time content checks would fail.
 - Keep legacy citation-only updates and patch previews compatible with stored
   frontmatter, and verify reconciliation independently of current fixer settings.
+
+### Starter workspaces
+
 - The workspace a new account starts with is an ordinary private workspace.
   It gets the same initial content as any created workspace, and nothing treats
   it specially afterwards: its owner can be changed like any other owner, it is
@@ -151,7 +169,14 @@
   with it gets a `ws-` prefix instead. All workspace slugs fold accented Latin
   letters to ASCII.
 
-## 0.1.4 — 2026-10-23
+### Navigation
+
+- Authenticated page permalinks redirect to the page in its current
+  workspace.
+- Refresh menu overview data when returning to a screen, including
+  through browser history or breadcrumbs, while preserving unsaved
+  Settings changes.
+- Dismiss stale tree tooltips after interacting with a row.
 
 ### Search results
 
@@ -175,11 +200,17 @@
 
 ### Database
 
+- Upgrade the published 0.1.3 database directly to the final 0.1.4 schema in
+  one revision: external login and retained account deletion storage, removal
+  of the personal workspace pointer (its workspaces and memberships stay), and
+  lookup indexes for change operations and review decision history. All
+  `users` changes share one table rebuild, and a refused downgrade changes
+  nothing.
 - Index `change_operation.change_set_id` for Review, explicit change searches,
-  and cascading deletion. Upgrade from the unchanged 0.1.3 revision and retain
-  all existing change-operation rows when adding or removing the index.
-- Freeze the 0.1.3 migration and its helper modules together with the new
-  0.1.4 revision in both source and package artifact checks.
+  and cascading deletion. Retain all existing change-operation rows when
+  adding or removing the index.
+- Freeze the 0.1.3 migration and its helper modules together with the 0.1.4
+  release revision in both source and package artifact checks.
 
 ## 0.1.3 — 2026-10-23
 

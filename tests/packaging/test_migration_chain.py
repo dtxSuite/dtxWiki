@@ -30,11 +30,8 @@ INITIAL_REVISION = "bd62193d5cf6"
 # Frozen core schema boundary of the 0.1 release group.
 CORE_REVISION = "efcbcf724889"
 RELEASE_013_REVISION = "19db79d3e622"
-RELEASE_014_REVISION = "ef53a0a7061c"
-PERSONAL_POINTER_REVISION = "5c3395a75eb0"
-EXTERNAL_LOGIN_REVISION = "da94025713de"
-REVIEW_HISTORY_INDEX_REVISION = "333a67e22cd7"
-CURRENT_HEAD = "eb86fdacb1bb"
+RELEASE_014_REVISION = "eb86fdacb1bb"
+CURRENT_HEAD = RELEASE_014_REVISION
 ALEMBIC_REVISION_METADATA = {
     "revision",
     "down_revision",
@@ -92,10 +89,6 @@ def test_graph_preserves_released_boundaries_and_appends_current_head():
         CORE_REVISION: INITIAL_REVISION,
         RELEASE_013_REVISION: CORE_REVISION,
         RELEASE_014_REVISION: RELEASE_013_REVISION,
-        PERSONAL_POINTER_REVISION: RELEASE_014_REVISION,
-        EXTERNAL_LOGIN_REVISION: PERSONAL_POINTER_REVISION,
-        REVIEW_HISTORY_INDEX_REVISION: EXTERNAL_LOGIN_REVISION,
-        CURRENT_HEAD: REVIEW_HISTORY_INDEX_REVISION,
     }
 
     manifest = json.loads((MIGRATIONS_DIR.parent / "release_manifest.json").read_text())
@@ -157,7 +150,7 @@ def test_the_freeze_covers_every_released_migration_file():
         "versions/v0_1/19db79d3e622_release_0_1_3.py",
         "revision_modules/v0_1/content_event_backfill_v1.py",
         "revision_modules/v0_1/input_restrictions_v1.py",
-        "versions/v0_1/ef53a0a7061c_index_change_operation_change_set_id.py",
+        "versions/v0_1/eb86fdacb1bb_release_0_1_4.py",
         *(
             f"revision_modules/v0_1/efcbcf724889_core_schema/{path.name}"
             for path in CORE_REVISION_DIR.glob("*.py")
