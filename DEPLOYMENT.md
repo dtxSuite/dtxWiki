@@ -736,9 +736,9 @@ docker compose up -d app worker
 색인과 pin이 삭제되므로 다시 업그레이드한 뒤에도 재색인이 필요합니다.
 
 미배포 중간 revision을 사용한 DB는 해당 revision의 원래 checkout으로 먼저
-`5b7e5c149279`까지 업그레이드하고 백업·schema 검증을 마친 뒤 0.2.1을 설치하세요.
+`5b7e5c149279`까지 업그레이드하고 백업·schema 검증을 마친 뒤 0.2.2를 설치하세요.
 이미 이 head인 DB는 schema를 유지합니다. 제거된 revision을 `alembic stamp`로
-우회하지 마세요. 배포된 0.1.4 이하 DB는 0.2.1 chain으로 직접 업그레이드합니다.
+우회하지 마세요. 배포된 0.1.4 이하 DB는 0.2.2 chain으로 직접 업그레이드합니다.
 
 ### 관리자 화면에서 버전 확인
 
@@ -791,7 +791,7 @@ readiness를 수행하며, 실패 시 자동 rollback하지 않고 복구 명령
 ```bash
 # systemd + private wheel index
 sudo dtxwiki update --check               # 새 버전 유무만 (가능하면 exit 10)
-sudo dtxwiki update --version 0.2.1       # 특정 버전 핀
+sudo dtxwiki update --version 0.2.2       # 특정 버전 핀
 sudo dtxwiki update --index-url https://pypi.internal/simple   # 사설 wheel index
 ```
 
@@ -1271,22 +1271,39 @@ endpoint를 사용한다.
 
 0.1.2부터 DB migration은 **릴리스 그룹**, **revision ID**, **변경 내용 이름**을 구분해
 관리합니다. 당시 ID·파일 배치 정리는 schema·데이터 작업을 바꾸지 않았습니다.
-0.2.1 배포본에는 아래 다섯 revision이 있으며, head는 `5b7e5c149279`입니다.
+새 설치와 기존 배포본 업그레이드는 같은 head `5b7e5c149279`에 도달합니다.
+
+v0.1.2부터의 배포본은 중간 버전을 따로 설치하지 않고 현재 버전으로 직접
+업그레이드할 수 있습니다. 각 버전의 migration 구현과 연결은 이후 통합 시에도
+보존해야 합니다.
+
+| 기존 배포 버전 | 기존 DB revision | 현재 버전으로의 경로 |
+| --- | --- | --- |
+| 새 설치 | 없음, DB가 비어 있음 | 전체 v0.2.1 schema를 단일 revision으로 직접 초기화 |
+| v0.1.2 | `efcbcf724889` | 정식 0.1.3 → 0.1.4 → v0.2 경로 적용 |
+| v0.1.3 | `19db79d3e622` | 정식 0.1.4 → v0.2 경로 적용 |
+| v0.1.4 | `eb86fdacb1bb` | 남은 v0.2 변경만 적용, 0.1.4 로그인·계정 보존 데이터 유지 |
+| v0.2.1·v0.2.2 | `5b7e5c149279` | 이미 최신 schema이면 migration 생략 |
 
 ```text
-base → bd62193d5cf6 (initial_schema) → efcbcf724889 (core_schema)
-     → 19db79d3e622 (0.1.3) → ef53a0a7061c (0.1.4) → 5b7e5c149279 (0.2, head)
+기존 배포본: efcbcf724889 (0.1.2) → 19db79d3e622 (0.1.3)
+           → eb86fdacb1bb (0.1.4) → 5b7e5c149279 (0.2, head)
+
+새 설치: base → 5b7e5c149279 (전체 v0.2.1 schema 직접 생성)
 ```
 
-`initial_schema`와 `core_schema` 뒤에 배포된 0.1.3·0.1.4 변경을 적용하고,
-0.2 통합 migration이 SSO·계정 보존·Review·Inbox·링크 locator·Graph·문서 참고문헌과
-Chats 인덱스를 추가합니다. 0.1.4 이후의 미배포 migration 13개만 통합했으며,
-배포된 이전 migration과 helper의 구현·해시는 유지합니다. 새 DB는 이 chain을
-순서대로 적용합니다.
+새 DB는 과거 migration을 재실행하지 않고 최종 schema를 직접 생성합니다.
+0.1.2·0.1.3 DB는 배포된 0.1.4 migration을 거쳐 업그레이드합니다.
+0.1.4 DB는 이미 적용된 SSO·계정 보존·Review 변경은 재실행하지 않고 Inbox·링크
+locator·Graph·문서 참고문헌·Chats 변경을 적용합니다. 시작 시 bootstrap과 직접
+Alembic 명령이 같은 경로를 사용하며, stamp를 수동 변경할 필요가 없습니다.
 
-통합 후에도 최종 revision ID와 schema는 같으므로 기존 `5b7e5c149279` DB는
-그대로 인식합니다. 제거된 미배포 중간 revision은 원래 checkout에서 최종 head까지
-업그레이드하고 백업·검증한 뒤 전환해야 합니다. `alembic stamp`로 건너뛰지 않습니다.
+0.2.1 패키지로 이미 `5b7e5c149279`에 도달한 DB는 schema가 같으므로 그대로
+인식합니다. 0.2.1 패키지가 중간에 거친 개발 전용 revision `ef53a0a7061c`는 배포에서
+제거했습니다. 이 revision은 한 upgrade transaction 안에서만 거쳤으므로 Alembic
+명령으로 직접 지정하지 않았다면 DB에 남지 않습니다. 이 stamp나 제거된 다른 미배포
+중간 revision이 남은 DB는 원래 checkout(예: 0.2.1)에서 최종 head까지 업그레이드하고
+백업·검증한 뒤 전환해야 합니다. `alembic stamp`로 건너뛰지 않습니다.
 
 ### 이전 DB의 revision ID 변환
 
@@ -1354,9 +1371,12 @@ backend/migrations/
 │   ├── v0_1/
 │   │   ├── efcbcf724889_core_schema.py
 │   │   ├── 19db79d3e622_release_0_1_3.py
-│   │   └── ef53a0a7061c_index_change_operation_change_set_id.py
+│   │   └── eb86fdacb1bb_release_0_1_4.py
 │   └── v0_2/
 │       └── 5b7e5c149279_release_0_2.py
+├── initialization/                        # 새 설치용 단일 초기화
+│   ├── versions/v0_2/5b7e5c149279_initial_schema.py
+│   └── schema/                            # SQLite·PostgreSQL의 고정된 최종 DDL
 ├── revision_modules/                      # 릴리스 그룹별 고정 helper 구현
 │   ├── v0_1/
 │   └── v0_2/
@@ -1377,12 +1397,12 @@ backend/migrations/
 
 ### 새 DB 변경 추가
 
-개발 checkout의 저장소 루트에서 다음 helper로 실행 파일을 생성합니다. 아래 `0.2.2`는
-0.2.1 이후 schema 변경을 추가하는 예시입니다. 버전만 바뀌고 DB 변경이 없으면
+개발 checkout의 저장소 루트에서 다음 helper로 실행 파일을 생성합니다. 아래 `0.2.3`은
+0.2.2 이후 schema 변경을 추가하는 예시입니다. 버전만 바뀌고 DB 변경이 없으면
 새 migration이 필요하지 않습니다.
 
 ```bash
-.venv/bin/python scripts/new_migration.py --release 0.2.2 -m "add workspace settings"
+.venv/bin/python scripts/new_migration.py --release 0.2.3 -m "add workspace settings"
 ```
 
 이 명령은 `versions/v0_2/<생성된 ID>_add_workspace_settings.py`를 만들고 직전 head와
