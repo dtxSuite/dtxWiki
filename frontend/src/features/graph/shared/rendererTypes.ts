@@ -23,6 +23,8 @@ export type GraphRenderNode = {
   entity_kind?: string;
   entity_id?: string;
   entityKind?: string;
+  /** Who acted, for a conversation: its client ("Claude Code") or person. */
+  actor_label?: string | null;
   grain?: string;
   referenceCount?: number;
   metricSized?: boolean;
@@ -62,6 +64,10 @@ export type GraphRenderScene = {
   // Client-only Local selection identity. Projection revision and generated
   // timestamps do not change selection. Context separately fences authority.
   scopeKey?: string;
+  // The node of the document the graph is opened from (the primary seed),
+  // drawn with the legend's "This document" glyph; seeds added by expanding
+  // keep their own. Left undefined, every seed keeps the seed glyph.
+  currentId?: string | null;
 };
 
 // Never reuse layout coordinates across actors, changed visibility, or a

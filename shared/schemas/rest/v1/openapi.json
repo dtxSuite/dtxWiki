@@ -4538,8 +4538,11 @@
             "type": "string"
           },
           "publication_state": {
-            "const": "editing",
             "default": "editing",
+            "enum": [
+              "editing",
+              "draft"
+            ],
             "title": "Publication State",
             "type": "string"
           },
@@ -5829,7 +5832,7 @@
       },
       "ContextPageCreateRequest": {
         "additionalProperties": false,
-        "description": "Canonical ``POST context/pages`` body (P8.1/P9.1).\n\nDeliberately has no ``slug``/``as_draft`` field: the canonical create\ncommand always runs ``create_page_first`` (new page + empty editing),\nregardless of whether a title/body is supplied. It never branches into\n``write_page``'s upsert-by-slug behavior -- that ambiguity is exactly what\nP8.1 retired this route to get away from.",
+        "description": "REST creation can explicitly save a shared draft in a browser session.",
         "properties": {
           "aliases": {
             "anyOf": [
@@ -5891,6 +5894,12 @@
               }
             ],
             "title": "Placement Parent Node Id"
+          },
+          "share_draft": {
+            "default": false,
+            "description": "Browser-session creation: save a shared, unpublished draft.",
+            "title": "Share Draft",
+            "type": "boolean"
           },
           "tags": {
             "anyOf": [
@@ -5959,6 +5968,12 @@
           "body_md": {
             "title": "Body Md",
             "type": "string"
+          },
+          "can_submit_for_review": {
+            "default": false,
+            "description": "Whether the caller may submit this exact version for review now: its own private edit or unreviewed shared browser draft.",
+            "title": "Can Submit For Review",
+            "type": "boolean"
           },
           "change_set_id": {
             "anyOf": [
@@ -8602,19 +8617,42 @@
         "title": "FeedbackListResponse",
         "type": "object"
       },
+      "GraphActionCount": {
+        "additionalProperties": false,
+        "description": "How often one action happened within an aggregate relation.",
+        "properties": {
+          "action_kind": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Action Kind",
+            "type": "string"
+          },
+          "count": {
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action_kind",
+          "count"
+        ],
+        "title": "GraphActionCount",
+        "type": "object"
+      },
       "GraphBudget": {
         "additionalProperties": false,
         "properties": {
           "edges": {
             "default": 150,
-            "maximum": 750.0,
+            "maximum": 1500.0,
             "minimum": 1.0,
             "title": "Edges",
             "type": "integer"
           },
           "nodes": {
             "default": 50,
-            "maximum": 250.0,
+            "maximum": 500.0,
             "minimum": 1.0,
             "title": "Nodes",
             "type": "integer"
@@ -8902,6 +8940,14 @@
       "GraphEdge": {
         "additionalProperties": false,
         "properties": {
+          "action_counts": {
+            "items": {
+              "$ref": "#/components/schemas/GraphActionCount"
+            },
+            "maxItems": 8,
+            "title": "Action Counts",
+            "type": "array"
+          },
           "action_kind": {
             "anyOf": [
               {
@@ -9441,6 +9487,28 @@
             ],
             "title": "Actor Label"
           },
+          "aggregate_count": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregate Count"
+          },
+          "chat_presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpChatPresentationDescriptor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "entity_id": {
             "format": "uuid",
             "title": "Entity Id",
@@ -9516,6 +9584,26 @@
             ],
             "title": "Path"
           },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/GraphNodeRecord"
+            },
+            "maxItems": 40,
+            "title": "Records",
+            "type": "array"
+          },
+          "review_status": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Status"
+          },
           "status": {
             "anyOf": [
               {
@@ -9537,6 +9625,38 @@
           "label"
         ],
         "title": "GraphNode",
+        "type": "object"
+      },
+      "GraphNodeRecord": {
+        "additionalProperties": false,
+        "description": "One lifecycle fact folded into the node it names.\n\nActivity history draws one edit as one version node. The change and audit\nrows that name that version ride on it here instead of becoming nodes.",
+        "properties": {
+          "action_kind": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Action Kind",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "source_kind": {
+            "enum": [
+              "change_operation",
+              "audit_event"
+            ],
+            "title": "Source Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_kind",
+          "occurred_at",
+          "source_kind"
+        ],
+        "title": "GraphNodeRecord",
         "type": "object"
       },
       "GraphOmission": {
@@ -13004,6 +13124,14 @@
             ],
             "title": "Message Key"
           },
+          "related_targets": {
+            "description": "Other entities the finding is about (for example, the second page of a pair), each titled at read time. A finding whose related page the actor cannot read is not returned at all.",
+            "items": {
+              "$ref": "#/components/schemas/LintRelatedTarget"
+            },
+            "title": "Related Targets",
+            "type": "array"
+          },
           "resolved_at": {
             "anyOf": [
               {
@@ -13144,6 +13272,38 @@
           "data"
         ],
         "title": "LintFormatResponse",
+        "type": "object"
+      },
+      "LintRelatedTarget": {
+        "additionalProperties": false,
+        "description": "Another entity a finding is about, readable by the requesting actor.",
+        "properties": {
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          },
+          "target_type": {
+            "title": "Target Type",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "target_type",
+          "target_id"
+        ],
+        "title": "LintRelatedTarget",
         "type": "object"
       },
       "LintRuleInfo": {
@@ -15083,6 +15243,80 @@
         "title": "McpChatOperationConflict",
         "type": "object"
       },
+      "McpChatPresentationDescriptor": {
+        "additionalProperties": false,
+        "description": "Read-time facts from which a localized chat label can be composed.\n\nThe backend ranks locale-neutral evidence only. ``subject`` is never built\nby parsing result-summary prose or by inferring an external user's prompt.",
+        "properties": {
+          "action": {
+            "enum": [
+              "search",
+              "read",
+              "create",
+              "edit",
+              "cite",
+              "guide",
+              "other"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "primary_tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Tool Name"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "subject_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Kind"
+          },
+          "title_source": {
+            "enum": [
+              "user",
+              "artifact",
+              "query",
+              "input_text",
+              "target_kind",
+              "tool",
+              "generic"
+            ],
+            "title": "Title Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title_source",
+          "action",
+          "subject",
+          "subject_kind",
+          "primary_tool_name"
+        ],
+        "title": "McpChatPresentationDescriptor",
+        "type": "object"
+      },
       "McpChatPreviewPurgeResponse": {
         "additionalProperties": false,
         "properties": {
@@ -16750,7 +16984,7 @@
       },
       "PageAutosaveRequest": {
         "additionalProperties": false,
-        "description": "P8.1: `expected_editing_revision` is a required CAS input here, not\noptional -- unlike `PATCH /{page_id}` (`PageUpdateRequest`, which targets\nthe page's own shared head and has no per-author \"editing\" row of its\nown), autosave always targets a specific actor's private \"editing\" row,\nwhere `content_hash` alone cannot catch a stale write that only changes\ntitle/tags/aliases/metadata (see `PageUpdateRequest.expected_editing_revision`'s\ncomment for why the hash-only check is insufficient). Inherits\n`PageUpdateRequest`'s tag/alias length validators unchanged.",
+        "description": "Save an actor's edit with revision CAS, including metadata changes.\n\nBrowser saves explicitly stage a shared draft with ``share_draft``;\nprivate editing clients retain their existing default behavior.",
         "properties": {
           "aliases": {
             "anyOf": [
@@ -16861,6 +17095,12 @@
               }
             ],
             "title": "Session Version Id"
+          },
+          "share_draft": {
+            "default": false,
+            "description": "Browser-session save: stage a shared, unpublished draft.",
+            "title": "Share Draft",
+            "type": "boolean"
           },
           "tags": {
             "anyOf": [
@@ -18384,7 +18624,7 @@
                 "type": "null"
               }
             ],
-            "description": "Required when publishing a mutable editing version; frozen submitted versions already bind their references.",
+            "description": "Required when a browser publishes an editing or draft version.",
             "title": "Expected References Hash"
           },
           "publish_despite_findings": {
@@ -22302,6 +22542,16 @@
           "graph": {
             "$ref": "#/components/schemas/PolicyCard"
           },
+          "labs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PolicyCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "library": {
             "$ref": "#/components/schemas/PolicyCard"
           },
@@ -22389,7 +22639,8 @@
               "agent_injection",
               "review",
               "lint",
-              "graph"
+              "graph",
+              "labs"
             ],
             "title": "Group",
             "type": "string"
@@ -22415,7 +22666,8 @@
               "agent_injection",
               "review",
               "lint",
-              "graph"
+              "graph",
+              "labs"
             ],
             "title": "Group",
             "type": "string"
@@ -25528,7 +25780,8 @@
             "enum": [
               "enabled",
               "disabled_by_workspace",
-              "service_unavailable"
+              "service_unavailable",
+              "permission_denied"
             ],
             "title": "Reason",
             "type": "string"
@@ -26852,7 +27105,7 @@
       "name": "AGPL-3.0-only OR Elastic-2.0"
     },
     "title": "dtxWiki",
-    "version": "0.2.2"
+    "version": "0.2.3"
   },
   "openapi": "3.1.0",
   "paths": {

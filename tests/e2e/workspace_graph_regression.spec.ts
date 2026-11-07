@@ -93,6 +93,14 @@ test.describe("Workspace Knowledge Map real-route regression", () => {
       });
       const scrollMetricsBeforeModal = await readScrollMetrics(detailsScroller);
       expect(scrollMetricsBeforeModal.scrollTop).toBeGreaterThan(0);
+      // Its overflow (including sr-only relation labels) stays inside it; it
+      // must not stretch the page into blank space below the map.
+      const pageScroll = await page.evaluate(() => {
+        const root = document.scrollingElement!;
+        return { clientHeight: root.clientHeight, scrollHeight: root.scrollHeight };
+      });
+      expect(pageScroll.scrollHeight, "Map details overflow must not scroll the page")
+        .toBe(pageScroll.clientHeight);
       await timeTrigger.evaluate((element) => {
         element.focus({ preventScroll: true });
         (element as HTMLButtonElement).click();
@@ -165,7 +173,6 @@ test.describe("Workspace Knowledge Map real-route regression", () => {
         page.request,
         `graph-off-${testInfo.project.name}-${testInfo.retry}-${Date.now()}@example.com`,
       );
-      await enableKnowledgeMapLab(page);
       const workspace = await currentWorkspace(page.request);
       const sceneQueries: string[] = [];
       page.on("request", (request) => {
@@ -177,10 +184,10 @@ test.describe("Workspace Knowledge Map real-route regression", () => {
       await expect(page.getByRole("heading", { name: "Knowledge Map", exact: true }))
         .toBeVisible();
       await expect(page.getByText(
-        "The Knowledge Map is off for this workspace. You can turn it on in Settings.",
+        "Knowledge Map is off for this workspace. You can enable it in Settings > Labs.",
       )).toBeVisible();
       await expect(page.getByRole("link", { name: "Open Settings" }))
-        .toHaveAttribute("href", `/workspaces/${workspace.id}/settings?section=workspace`);
+        .toHaveAttribute("href", `/workspaces/${workspace.id}/settings?section=labs`);
       await expect(page.getByRole("link", { name: /Knowledge Map/ })).toHaveCount(0);
       expect(sceneQueries).toEqual([]);
     });
@@ -299,6 +306,15 @@ test.describe("Knowledge Map unified Refine workflow", () => {
         const apply = dialog.getByRole("button", { name: "Apply data filters" });
         await expect(apply).toHaveCount(1);
         await expect(apply).toBeDisabled();
+        // The filters overflow the panel, so the sticky Cancel/Apply footer must
+        // sit flush on its bottom edge: a strip below it shows the scrolled filters.
+        const footerGap = await dialog.evaluate((element) => {
+          const panel = element.getBoundingClientRect();
+          return { overflow: element.scrollHeight > element.clientHeight,
+            gap: panel.bottom - element.querySelector("footer")!.getBoundingClientRect().bottom };
+        });
+        expect(footerGap.overflow).toBe(true);
+        expect(footerGap.gap).toBeCloseTo(0, 0);
         await dialog.getByRole("button", { name: "Orphans", exact: true }).click();
         await dialog.getByRole("searchbox", { name: "Search published documents" }).fill("Discard this");
         await expect(apply).toBeEnabled();
@@ -468,10 +484,10 @@ async function expectRendererReady(scope: Page | ReturnType<Page["getByRole"]>) 
 async function selectKnowledgeDocument00(page: Page) {
   // Browse the folded list a page at a time; keyboard focus stays in the sidebar.
   const list = page.getByTestId("workspace-graph-node-list");
-  const head = list.locator(".workspace-graph-fold-head").first();
+  const head = list.locator(".relation-list-fold-head").first();
   if (await head.getAttribute("aria-expanded") === "false") await head.click();
   const row = list.locator("li").filter({ hasText: "Knowledge Document 00" }).first();
-  const more = list.locator(".workspace-graph-more");
+  const more = list.locator(".relation-list-more");
   while (!await row.count() && await more.count()) await more.click();
   await row.locator("button.workspace-graph-list-select").click();
   await expect(page.locator(".workspace-graph-details").getByRole("heading", {

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
-  GRAPH_EDGE_PATTERN,
+  GRAPH_EDGE_ARROW, GRAPH_EDGE_PATTERN,
   GRAPH_NODE_RADIUS_PX,
   readGraphTokens,
 } from "../graphTokens";
@@ -14,17 +14,19 @@ describe("Graph visual tokens", () => {
     expect(readGraphTokens(element, "light").node).toMatchObject({
       context: "#7c3aed",
       library: "#0f9f8f",
-      conversation: "#ea580c",
+      agent: "#d97706",
+      conversation: "#0284c7",
     });
-    // The actual canvas receives dark overrides from the document theme,
-    // rather than needing a data attribute that GraphCanvas never sets.
+    // Canvases, legends and list cues outside them all inherit the theme from
+    // the document root, rather than from a canvas-only rule.
     const graphCss = readFileSync("src/styles/03-editor.css", "utf8");
-    expect(graphCss).toContain(':root[data-theme="dark"] .graph-canvas,');
-    expect(graphCss).toContain("--graph-node-context: #8b5cf6;");
+    const darkTokens = graphCss.slice(graphCss.indexOf(':root[data-theme="dark"],\n.graph-canvas[data-graph-theme="dark"] {'));
+    expect(darkTokens.slice(0, darkTokens.indexOf("}"))).toContain("--graph-node-agent: #f59e0b;");
     expect(readGraphTokens(element, "dark").node).toMatchObject({
       context: "#8b5cf6",
       library: "#0d9488",
-      conversation: "#ea580c",
+      agent: "#f59e0b",
+      conversation: "#38bdf8",
     });
   });
 
@@ -62,6 +64,8 @@ describe("Graph visual tokens", () => {
       // Cosmos snapshots this computed color for its document-label spans;
       // checking palette-token text alone would miss the dark foreground bug.
       expect(readGraphTokens(canvas, "dark").surface).toBe("#0f172a");
+      // The static diagram writes its titles in this ink, not the page's --ink.
+      expect(readGraphTokens(canvas, "dark").ink).toBe("#e5e7eb");
       expect(getComputedStyle(canvas).color).toBe("rgb(229, 231, 235)");
       expect(getComputedStyle(unrelated).color).toBe("rgb(15, 23, 42)");
       canvas.style.color = "rgb(255, 255, 255)";
@@ -100,8 +104,15 @@ describe("Graph visual tokens", () => {
       citation: [7, 4],
       coAccess: [2, 3.5],
       membership: [3, 3],
+      actionWrite: null,
+      actionCite: [6, 3],
+      actionRead: [10, 5],
+      actionReference: [1.5, 3.5],
       action: [10, 3],
     });
+    // Without colour, a write still differs from a link by its arrowhead.
+    expect(Object.entries(GRAPH_EDGE_ARROW).filter(([, arrow]) => arrow).map(([kind]) => kind))
+      .toEqual(["actionWrite", "actionCite"]);
   });
 
   it("keeps separate Local and Workspace dot-size limits", () => {
