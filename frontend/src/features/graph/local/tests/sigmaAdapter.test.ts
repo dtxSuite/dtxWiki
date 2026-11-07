@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { GraphRenderScene } from "../../shared/rendererTypes";
 import { createLocalLayout } from "../layout";
+import { LOCATE_TRACE_MS } from "../locateTrace";
 import { buildLocalScene } from "../sceneInput";
-import { createSigmaGraphAdapter, type SigmaGraphAdapter } from "../sigmaAdapter";
+import { createSigmaGraphAdapter, LOCAL_MIN_NODE_SCALE, localNodeSizeScale, type SigmaGraphAdapter } from "../sigmaAdapter";
 
 const state = vi.hoisted(() => ({
   sigma: null as unknown as {
@@ -35,7 +36,7 @@ vi.mock("@sigma/node-border", () => ({
 vi.mock("@sigma/node-square", () => ({
   NodeSquareProgram: class { drawLabel = state.nativeSquareLabel; },
 }));
-vi.mock("sigma/rendering", () => ({ NodeCircleProgram: class {} }));
+vi.mock("sigma/rendering", () => ({ NodeCircleProgram: class {}, createNodeCompoundProgram: () => class {} }));
 vi.mock("../edgePrograms", () => ({ LOCAL_EDGE_PROGRAMS: {} }));
 vi.mock("../layout", () => ({ createLocalLayout: vi.fn(() => state.layout) }));
 vi.mock("sigma", () => ({
@@ -69,6 +70,8 @@ vi.mock("sigma", () => ({
     graphToViewport(point: unknown) { return point; }
     scaleSize(size: number) { return size; }
     getCanvases() { return { nodes: state.nodeCanvas! }; }
+    createCanvasContext() { return this; }
+    resize() { return this; }
     viewportToGraph(point: unknown) { return point; }
     getBBox() { return { x: [-10, 10], y: [-10, 10] }; }
     setCustomBBox = state.setCustomBBox;
@@ -113,6 +116,27 @@ afterEach(() => {
   adapter.destroy();
   state.labelPass = null;
   vi.unstubAllGlobals();
+});
+
+describe("Local node size", () => {
+  it("never draws two laid-out nodes over each other, and keeps legend size where the scene fits", () => {
+    // The layout separates two nodes by at least the sum of their radii in
+    // layout units. Drawn, they are that far apart times pixels-per-unit and
+    // as wide as their radii times the size scale: no overlap at any zoom
+    // while scale <= pixels-per-unit (above the far zoom-out floor).
+    for (const fit of [0.3, 0.44, 1, 1.7, 3]) {
+      for (const cameraRatio of [0.15, 1 / 6, 0.5, 1, 1.5, 3]) {
+        const pixelsPerUnit = fit / cameraRatio;
+        expect(localNodeSizeScale(pixelsPerUnit, cameraRatio))
+          .toBeLessThanOrEqual(Math.max(pixelsPerUnit, LOCAL_MIN_NODE_SCALE) + 1e-9);
+      }
+    }
+    // A scene that fits keeps the legend's sizes, and zooming in still grows them.
+    expect(localNodeSizeScale(1.7, 1)).toBe(1);
+    expect(localNodeSizeScale(1.7 * 6, 1 / 6)).toBeCloseTo(Math.sqrt(6));
+    // A large scene fitted at 0.44 px per unit draws its glyphs at 0.44.
+    expect(localNodeSizeScale(0.44, 1)).toBeCloseTo(0.44);
+  });
 });
 
 describe("Local Sigma interactions", () => {
@@ -207,6 +231,56 @@ describe("Local Sigma interactions", () => {
     expect(reduced.color).not.toBe("#ffffff");
     adapter.select(null);
     expect(reducer("context_page:other", data).color).toBe(data.color);
+  });
+
+  it("draws only the current document with the seed glyph at its relation size, never fades it, and traces its ring once when located", () => {
+    const attributes = (id: string) => state.sigma.graph.getNodeAttributes(`context_page:${id}`);
+    const reducer = () => state.sigma.settings.nodeReducer as (key: string, data: Record<string, unknown>) => Record<string, unknown>;
+    // A scene that names no current document keeps the seed glyph for every
+    // seed, without the current document's emphasis.
+    expect(attributes("seed")).toMatchObject({ type: "seed", zIndex: 0, isCurrent: false });
+    // "other" was expanded: a seed, but not the document the graph is opened from.
+    const current: GraphRenderScene = { ...cloneScene(), currentId: "seed",
+      nodes: cloneScene().nodes.map((node) => node.id === "other" ? { ...node, is_seed: true } : node) };
+    adapter.replaceScene(current);
+    const metric = buildLocalScene(cloneScene()).nodes.find((node) => node.key === "context_page:seed")!.radiusPx;
+    const seed = attributes("seed");
+    // The legend's "This document" glyph keeps the relation-count size.
+    expect(seed).toMatchObject({ type: "seed", shape: "circle", zIndex: 1, size: metric });
+    expect(attributes("other")).toMatchObject({ type: "circle", zIndex: 0 });
+    // Selecting the expanded seed puts the current document outside its star:
+    // the neighbor fades, the current document keeps its colour, glyph and label.
+    adapter.select("other");
+    expect(reducer()("context_page:seed", seed)).toMatchObject({
+      type: "seed", color: seed.color, borderColor: seed.borderColor, label: "seed", forceLabel: true,
+    });
+    expect(reducer()("context_page:neighbor", attributes("neighbor")).color).not.toBe(attributes("neighbor").color);
+
+    // Reduced motion centres without a trace.
+    adapter.locate("seed");
+    expect(state.setCameraState).toHaveBeenCalled();
+    expect(state.container!.querySelector(".graph-locate-trace")).toBeNull();
+    // Otherwise the ink ring is traced once over the bare disc, and the glyph
+    // comes back even when no animationend arrives.
+    vi.useFakeTimers();
+    try {
+      adapter.destroy();
+      adapter = createSigmaGraphAdapter(state.container!, current, {
+        callbacks, forcedColors: false, positions: {}, reducedMotion: false,
+      });
+      adapter.locate("seed");
+      expect(state.container!.querySelectorAll(".graph-locate-trace circle")).toHaveLength(1);
+      expect(reducer()("context_page:seed", attributes("seed"))).toMatchObject({ type: "circle", size: metric });
+      // Locating again mid-trace restarts it rather than cancelling it.
+      adapter.locate("seed");
+      expect(state.container!.querySelectorAll(".graph-locate-trace circle")).toHaveLength(1);
+      expect(reducer()("context_page:seed", attributes("seed"))).toMatchObject({ type: "circle", size: metric });
+      vi.advanceTimersByTime(LOCATE_TRACE_MS + 200);
+      expect(state.container!.querySelector(".graph-locate-trace")).toBeNull();
+      expect(reducer()("context_page:seed", attributes("seed"))).toMatchObject({ type: "seed", size: metric });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps nonincident original relationships dimmed and restores them without layout or camera changes", () => {
@@ -664,15 +738,22 @@ describe("Local Sigma interactions", () => {
     },
   );
 
-  it("renders Context versions as Context points and structural folders as hollow rings", () => {
+  it("renders Context versions as purple triangles, folders as rings, and keeps a history event's glyph", () => {
     adapter.replaceScene({ nodes: [
-      { id: "version", entity_id: "version", entity_kind: "context_page_version", family: "document", label: "Version" },
+      { id: "version", entity_id: "version", entity_kind: "context_page_version", family: "document", label: "Version",
+        highlighted: true },
       { id: "folder", entity_id: "folder", entity_kind: "workspace_tree_node", family: "structural", label: "Folder" },
     ], edges: [] });
     expect(state.sigma.graph.getNodeAttributes("context_page_version:version")).toMatchObject({
-      color: "#7c3aed", type: "circle",
+      color: "#7c3aed", type: "triangle", shape: "triangle",
     });
     expect(state.sigma.graph.getNodeAttributes("workspace_tree_node:folder").type).toBe("folder");
+    // A history event is marked by the ring layer; the glyph and size stay.
+    const reducer = state.sigma.settings.nodeReducer as (key: string, data: Record<string, unknown>) => Record<string, unknown>;
+    const attributes = state.sigma.graph.getNodeAttributes("context_page_version:version");
+    expect(reducer("context_page_version:version", attributes)).toMatchObject({
+      type: "triangle", size: attributes.size, highlighted: true,
+    });
   });
 
   it("keeps non-color shape distinctions for Library, Agent, conversations and folders in forced colors", () => {

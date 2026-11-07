@@ -51,7 +51,15 @@
       "active": "Active",
       "completed": "Completed",
       "failed": "Failed",
-      "deleted": "Deleted"
+      "deleted": "Deleted",
+      "state_inconsistent": "State review required",
+      "current_editing": "Currently editing",
+      "current_draft": "Current draft",
+      "published_snapshot": "Current published snapshot",
+      "alternative_draft": "Alternative draft",
+      "discarded_draft": "Discarded draft",
+      "superseded_snapshot": "Superseded snapshot",
+      "superseded_draft": "Superseded draft"
     },
     "graphEdgeKind": {
       "wikilink": "Wiki link",
@@ -83,9 +91,9 @@
       "restored": "Restored",
       "superseded": "Superseded",
       "promoted": "Promoted",
-      "tool_produced": "Produced by tool",
       "referenced": "Referenced",
-      "removed": "Removed"
+      "removed": "Removed",
+      "viewed": "Viewed"
     },
     "graphEntityKind": {
       "context_page": "Context page",
@@ -106,7 +114,9 @@
       "change_operation": "Change operation",
       "graph_observation": "Graph observation",
       "workspace_tree_node": "Workspace tree node",
-      "library_sync_run": "Library sync run"
+      "library_sync_run": "Library sync run",
+      "mcp_chat_session_group": "MCP chat group",
+      "ask_session_group": "Ask session group"
     },
     "graphEvidenceKind": {
       "observation": "Observation",
@@ -178,7 +188,6 @@
     "staticFallbackFailed": "Static graph fallback",
     "staticFallbackList": "This scene exceeds the diagram limit of {{limit}} relationships. All nodes and relationships are listed here.",
     "printFallback": "Graph relationships",
-    "relationshipList": "Accessible graph contents",
     "relationshipListDescription": "Tab into each list once. Use arrow keys to highlight items, then Enter or Space to select and access their actions in Details.",
     "nodes": "Nodes",
     "edges": "Relationships",
@@ -223,25 +232,36 @@
     },
     "legend": {
       "heading": "Legend",
-      "actionLines": "Long-dashed lines show action occurrences, not document links or citations.",
       "nodes": "Node types",
       "edges": "Relationship line styles",
       "node": {
-        "context": "Context page or version",
+        "context": "Context document",
+        "version": "Document version",
+        "agent": "Agent document",
         "library": "Library material",
-        "conversation": "Conversation or activity",
+        "conversation": "Chat or activity record",
         "folder": "Folder",
-        "seed": "Seed",
-        "agent": "Agent document"
+        "seed": "This document"
       },
       "edge": {
         "link": "Link",
         "citation": "Citation",
         "coAccess": "Often read together",
         "membership": "Folder membership",
-        "action": "Action occurrence"
+        "action": "Action occurrence",
+        "removed": "Removed relationship",
+        "actionWrite": "Wrote or edited",
+        "actionCite": "Cited",
+        "actionRead": "Read",
+        "actionReference": "Looked at structure",
+        "actionOther": "Other activity"
       },
-      "meanings": "Relationship meanings"
+      "edgeNote": {
+        "action": "Recorded activity such as creating, editing, reviewing, searching and citing",
+        "actionOther": "Review, publish, search and other records"
+      },
+      "history": "History marks",
+      "eventTarget": "Current event target"
     },
     "timeline": {
       "heading": "Timeline",
@@ -273,15 +293,6 @@
       "edgeEvent": "{{source}} —{{action}}→ {{target}}",
       "filteredEvent": "No visible change under the current filters."
     },
-    "sceneNavigation": {
-      "members": "Members in this scene",
-      "folders": "Folders in this scene",
-      "neighbors": "Direct neighbors in this scene",
-      "noMembers": "No members are connected in this scene.",
-      "noFolders": "No folders are connected in this scene.",
-      "noNeighbors": "No direct neighbors are connected in this scene.",
-      "keyboardHint": "Tab into this list once. Use Up/Down or Home/End to highlight items. Press Enter or Space to select and focus Details."
-    },
     "details": {
       "heading": "Details",
       "empty": "Select a node or relationship to inspect it.",
@@ -290,9 +301,6 @@
       "center": "Center",
       "pin": "Pin",
       "unpin": "Unpin",
-      "type": "Type",
-      "kind": "Kind",
-      "status": "Status",
       "actor": "Actor",
       "layer": "Layer",
       "relationship": "Relationship",
@@ -305,10 +313,11 @@
       "evidenceRef": "Evidence reference",
       "available": "Available",
       "unavailable": "Unavailable",
-      "edgeSentence": "{{source}} —{{action}}→ {{target}}",
       "seedRelationships": "Relationship to the seed",
       "expandSheet": "Expand details",
-      "collapseSheet": "Collapse details"
+      "collapseSheet": "Collapse details",
+      "records": "Records of this version",
+      "review": "Review"
     },
     "citationEvidence": {
       "title": "Retained citation evidence",
@@ -338,6 +347,7 @@
       "heading": "Graph view",
       "compare": "Compare views",
       "seed": "Seed",
+      "locateCurrent": "Show {{label}} on the graph",
       "refresh": "Refresh graph",
       "fullscreen": "Graph fullscreen",
       "exitFullscreen": "Exit fullscreen",
@@ -346,7 +356,6 @@
       "fullscreenUnavailable": "Fullscreen is unavailable in this browser.",
       "dismissNotice": "Dismiss coverage notice",
       "fetched": "Fetched {{time}}",
-      "list": "View as list",
       "legend": "Legend",
       "rows": {
         "question": "Question",
@@ -419,7 +428,7 @@
       "partial": "Recorded history only",
       "latest": "Latest",
       "authoring": "Edits & reviews",
-      "tools": "AI & tool usage",
+      "tools": "AI chats",
       "versions": "Document versions",
       "relations": "Relationship changes",
       "group": "Expand {{count}} records",
@@ -440,15 +449,155 @@
       "kind": {
         "version": "Version",
         "review": "Review",
-        "ask": "Ask",
-        "tool": "MCP",
+        "ask": "Ask session",
+        "tool": "MCP chat",
         "activity": "Activity",
         "added": "Relationship added",
         "removed": "Relationship removed"
       },
       "restoredLatest": "The record you were viewing is no longer in the results. Moved to the latest record.",
       "groupRecords": "{{count}} nearby records",
-      "closeGroup": "Close"
+      "closeGroup": "Close",
+      "referenced": "Structure-only looks",
+      "referencedHint": "Chats that only read this document's outline or structure. Hidden by default.",
+      "sessionDetail": "This document: {{verbs}}",
+      "sessionDetailWithOthers_one": "This document: {{verbs}} · {{count}} other document",
+      "sessionDetailWithOthers_other": "This document: {{verbs}} · {{count}} other documents"
+    },
+    "list": {
+      "title": "Graph list",
+      "counts": "{{nodes}} · {{edges}}",
+      "nodeCount_one": "{{value}} node",
+      "nodeCount_other": "{{value}} nodes",
+      "relationCount_one": "{{value}} relationship",
+      "relationCount_other": "{{value}} relationships",
+      "search": "Find in the graph list",
+      "searchPlaceholder": "Name or kind",
+      "clearSearch": "Clear list search",
+      "status": "“{{query}}” matches {{nodes}} · {{edges}}",
+      "noMatch": "Nothing matches “{{query}}”.",
+      "incomingNote": "point to the seed",
+      "outgoingNote": "the seed points to",
+      "undirectedNote": "connected both ways",
+      "groups": {
+        "seed": "Seed relationships",
+        "seedNamed": "Relationships of {{label}}",
+        "neighbors": "Between neighbors",
+        "neighborsNote": "both ends are direct neighbors",
+        "ringNodes": "Two or more steps away",
+        "ringNodesNote": "reached through a neighbor",
+        "ringRelations": "Relationships further out",
+        "ringRelationsNote": "an end is two or more steps away",
+        "unlinked": "Not connected to the seed",
+        "unlinkedNote": "their relationships to the seed are hidden or absent"
+      },
+      "via": "via {{label}}",
+      "viaMore": "via {{label}} and {{count}} more",
+      "steps": "{{count}} steps"
+    },
+    "relations": {
+      "title": "Relationships",
+      "none": "No relationships are shown in this scene.",
+      "search": {
+        "document": "Find in the selected document's relationships",
+        "library": "Find in the selected source's relationships",
+        "folder": "Find in the selected folder's relationships",
+        "other": "Find in the selected item's relationships"
+      },
+      "self": {
+        "document": "Selected document",
+        "library": "Selected source",
+        "folder": "Selected folder",
+        "other": "Selected item"
+      },
+      "incomingNote": {
+        "document": "to the selected document",
+        "library": "to the selected source",
+        "folder": "to the selected folder",
+        "other": "to the selected item"
+      },
+      "outgoingNote": {
+        "document": "from the selected document",
+        "library": "from the selected source",
+        "folder": "from the selected folder",
+        "other": "from the selected item"
+      },
+      "undirectedNote": "connected both ways"
+    },
+    "seedPath": {
+      "direct": "Direct",
+      "steps": "{{steps}} steps · {{via}} in between",
+      "via": "via",
+      "alternatives": "Also via {{count}}: {{labels}}",
+      "alternativesMore": "Also via {{count}}: {{labels}} and more",
+      "otherSeeds": "Direct relationships with other seeds"
+    },
+    "listChips": {
+      "node": {
+        "context": "Context",
+        "version": "Version",
+        "library": "Library",
+        "agent": "Agent",
+        "agentVersion": "Agent version",
+        "folder": "Folder"
+      },
+      "edge": {
+        "wikilink": "Link",
+        "citation_page": "Citation",
+        "citation_source": "Source",
+        "citation_agent": "Citation",
+        "ask_citation": "Evidence",
+        "tree": "Membership",
+        "co_access": "Read together"
+      }
+    },
+    "roles": {
+      "source": "Source",
+      "target": "Target",
+      "sourceLink": "Source · linking document",
+      "targetLink": "Target · linked document",
+      "sourceCitation": "Source · citing document",
+      "targetCitation": "Target · cited item",
+      "sourceMembership": "Source · folder",
+      "targetMembership": "Target · member"
+    },
+    "viewMode": {
+      "group": "View",
+      "graph": "Graph",
+      "list": "List"
+    },
+    "session": {
+      "groupHeading": "More conversations",
+      "list": {
+        "chats": "Chats",
+        "ask": "Ask"
+      },
+      "thisDocument": "What it did here",
+      "produced": "Produced {{version}} · {{outcome}}",
+      "flow": "Flow",
+      "loading": "Loading the chat…",
+      "loadFailed": "Could not load the chat.",
+      "retry": "Retry",
+      "stepMore": "{{title}} and {{count}} more",
+      "fullFlow": "See all {{count}} steps in Chats",
+      "coUsed": "Also used",
+      "noCoUsed": "No other document this chat used is in the scene.",
+      "digest": {
+        "sessions": "AI chats {{count}}",
+        "edited": "edited this document {{count}}",
+        "inReview": "in review {{count}}"
+      },
+      "more_one": "{{count}} more conversation",
+      "more_other": "{{count}} more conversations",
+      "times_one": "{{count}} time",
+      "times_other": "{{count}} times",
+      "groupBody_one": "{{count}} more conversation used this document. Only the most recent are drawn.",
+      "groupBody_other": "{{count}} more conversations used this document. Only the most recent are drawn.",
+      "review": {
+        "pending": "In review",
+        "changes_requested": "Changes requested",
+        "rejected": "Rejected"
+      }
     }
   },
   "workspaceGraph": {
@@ -610,18 +759,17 @@
       "title": "Legend and metric meaning",
       "shapes": "Node colors and shapes",
       "context": "Context document",
-      "library": "Library document",
+      "library": "Library material",
       "cluster": "Aggregate cluster · larger means more documents",
       "lines": "Relationship line styles",
-      "knowledge": "Knowledge relationship",
-      "evidence": "Evidence relationship",
-      "crossFolder": "Cross-folder relationship",
       "size": "Node size metric",
       "visibleRelationMetric": "Node size: relationships shown in this map (bounded square-root scale).",
       "linksMetric": "Node size: Referenced by N visible documents (bounded square-root scale).",
       "evidenceMetric": "Node size: visible evidence relationship count (bounded square-root scale).",
       "uniformMetric": "Node size is uniform for this lens; it does not encode importance.",
-      "agent": "Agent document"
+      "agent": "Agent document",
+      "link": "Link",
+      "citation": "Citation"
     },
     "enums": {
       "context": "Context",
@@ -689,11 +837,7 @@
         "outgoing": "Matches → other documents",
         "incoming": "Other documents → matches"
       },
-      "more": "Show {{count}} more ({{remaining}} left)",
-      "openDocument": "Open document: {{label}}",
       "expandCluster": "Expand cluster: {{label}}",
-      "relationName": "{{source}} to {{target}}, {{kind}}",
-      "relationNameUndirected": "{{source}} and {{target}}, {{kind}}",
       "clusterMeta": "{{members}} members · {{relations}} relations",
       "referenceMetricShort_one": "{{count}} reference",
       "referenceMetricShort_other": "{{count}} references",
@@ -736,12 +880,6 @@
       "none": "No relationships in the visible map.",
       "searchDocument": "Find in this document's relationships",
       "searchCluster": "Find in this cluster's relationships",
-      "searchPlaceholder": "Name, folder or kind",
-      "clearSearch": "Clear relationship search",
-      "searchStatus": "{{shown}} of {{total}} match",
-      "noMatch": "No relationships match “{{query}}”.",
-      "incoming": "Incoming",
-      "outgoing": "Outgoing",
       "incomingNoteDocument": "to this document",
       "incomingNoteCluster": "to this cluster",
       "outgoingNoteDocument": "from this document",
@@ -752,6 +890,7 @@
     "chips": {
       "context": "Context",
       "library": "Library",
+      "agent": "Agent",
       "cluster": "Cluster",
       "folder_cluster": "Folder",
       "link_cluster": "Cluster",
@@ -759,12 +898,7 @@
       "wikilink": "Link",
       "citation_page": "Citation",
       "citation_source": "Source",
-      "ask_citation": "Evidence",
-      "line": {
-        "link": "Links (solid line)",
-        "citation": "Citations and sources (dashed line)",
-        "other": "Other relationships"
-      }
+      "ask_citation": "Evidence"
     },
     "drawer": {
       "close": "Close Refine data",
@@ -863,9 +997,31 @@
       "checking": "Checking whether the Knowledge Map is on for this workspace…",
       "checkFailed": "Could not check whether the Knowledge Map is on for this workspace.",
       "serviceUnavailable": "The Knowledge Map is temporarily turned off on this server. Graphs on individual documents are still available.",
-      "disabledOwner": "The Knowledge Map is off for this workspace. You can turn it on in Settings.",
-      "disabledMember": "The Knowledge Map is off for this workspace. A workspace owner can turn it on in Settings. Graphs on individual documents are still available.",
-      "openSettings": "Open Settings"
+      "disabledOwner": "Knowledge Map is off for this workspace. You can enable it in Settings > Labs.",
+      "disabledMember": "Only workspace administrators can use Knowledge Map. Document Graph tabs remain available.",
+      "openSettings": "Open Settings",
+      "permissionDenied": "Only workspace administrators can use Knowledge Map."
+    }
+  },
+  "relationList": {
+    "more": "Show {{count}} more ({{remaining}} left)",
+    "openDocument": "Open document: {{label}}",
+    "relationName": "{{source}} to {{target}}, {{kind}}",
+    "relationNameUndirected": "{{source}} and {{target}}, {{kind}}",
+    "searchPlaceholder": "Name, folder or kind",
+    "clearSearch": "Clear relationship search",
+    "searchStatus": "{{shown}} of {{total}} match",
+    "noMatch": "No relationships match “{{query}}”.",
+    "incoming": "Incoming",
+    "outgoing": "Outgoing",
+    "undirected": "No direction",
+    "lines": {
+      "link": "Links (solid line)",
+      "citation": "Citations and sources (dashed line)",
+      "coAccess": "Read together (dotted line)",
+      "membership": "Folder membership (dashed line)",
+      "action": "Actions (long dashes)",
+      "other": "Other relationships"
     }
   }
 }

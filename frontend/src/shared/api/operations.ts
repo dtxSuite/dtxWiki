@@ -132,6 +132,7 @@ export type SettingsPolicies = Omit<
   | "review"
   | "lint"
   | "graph"
+  | "labs"
 > & {
   workspace: PolicyCard;
   library: PolicyCard;
@@ -141,6 +142,7 @@ export type SettingsPolicies = Omit<
   review: PolicyCard;
   lint: PolicyCard;
   graph: PolicyCard;
+  labs?: PolicyCard | null;
 };
 
 export type McpClientStatus = "active" | "disabled";
@@ -153,7 +155,8 @@ export type SettingsPolicyGroup =
   | "agent_injection"
   | "review"
   | "lint"
-  | "graph";
+  | "graph"
+  | "labs";
 
 export type SearchScope =
   | "all"
@@ -519,11 +522,11 @@ export async function updateSettingsPolicyBatch(
   } catch (error) {
     // One-release compatibility for pre-batch servers. Current servers always
     // take the atomic path; only an explicit missing route may use legacy
-    // single-key writes.
+    // single-key writes. Policies with atomic Save flows must never downgrade.
     if (
       !(error instanceof ApiError) ||
       error.status !== 404 ||
-      request.group === "library"
+      (request.group === "library" || request.group === "labs" || request.group === "lint")
     ) {
       throw error;
     }
@@ -746,9 +749,14 @@ export async function listMcpChats(
   return response.data;
 }
 
-export async function readMcpChat(workspaceId: string, chatSessionId: string) {
+export async function readMcpChat(
+  workspaceId: string,
+  chatSessionId: string,
+  init: Pick<RequestInit, "signal"> = {},
+) {
   const response = await apiRequest<{ data: McpChatDetail }>(
     `/api/v1/workspaces/${workspaceId}/mcp-chats/${chatSessionId}`,
+    { signal: init.signal },
   );
   return response.data;
 }

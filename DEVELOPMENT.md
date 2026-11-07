@@ -44,10 +44,11 @@ make backend-dev        # uvicorn --reload (API only, 21080)
 make frontend-dev       # Vite dev server (21173, HMR)
 ```
 
-Workspace Knowledge Map은 workspace마다 기본적으로 꺼져 있습니다. Owner가
-Settings > Workspace의 Knowledge graph 카드에서 켠 뒤, 각 사용자가
-Settings > Labs에서 Knowledge Map 메뉴를 켜면 메뉴와 `/graph`가 활성화됩니다.
-Labs 설정도 기본 꺼짐이며 현재 계정·브라우저에 저장됩니다.
+Settings > Labs의 Ask, Agent, Workspace Knowledge Map은 workspace마다 기본적으로
+꺼져 있습니다. Workspace Owner만 Labs에서 기능을 설정하고 사용할 수 있습니다.
+Labs의 실험 기능 카드에서 Ask 검색 모드를 관리하고, 별도의 Knowledge graph
+카드에서 지식 지도와 관계 신호를 관리합니다.
+변경 사항은 Save changes를 누르면 서버에 저장되며 해당 workspace에 적용됩니다.
 재빌드나 서버 재시작은 필요 없습니다. 운영자는
 `DTXWIKI_GRAPH_SERVICE_AVAILABLE=false`로 모든 workspace의 지도를 일시적으로
 끌 수 있습니다. 문서별 Local Graph는 이 설정과 독립적으로 사용할 수 있습니다.
@@ -263,25 +264,28 @@ npm run lint:md            # markdown lint (markdownlint-cli2)
 
 일반 `CI` 워크플로(`.github/workflows/ci.yml`)는 pull request와 `main` push에서
 leak scan, backend·static, frontend·desktop, 기본 E2E 검증을 실행합니다.
-Graph 검증은 별도 `graph-2k` job이 E2E와 병렬로 실행합니다. 이 job은 `@pc10k`를 제외한
-WebGL gate(`npm run test:graph-webgl -- --project=chromium`)와 `DTXWIKI_E2E_GRAPH_2K=1`
-실제 API 2K spec을 돌립니다. WebGL gate의 `@pc10k` 케이스(`--project=chromium-pc10k`)는
-`Release checks`의 `graph-10k`가 담당합니다. 대규모 입력으로 처리량·상한을 확인하는
-backend 용량 검사는 `release_scale` marker를 붙입니다. PR의 `make test-backend`는 이를
+기본 E2E는 Chromium과 Firefox/WebKit 두 job으로 나누고, 브라우저·OS 의존성이
+포함된 Playwright 공식 컨테이너에서 실행합니다. 컨테이너 버전은 `package-lock.json`의
+Playwright 버전과 맞춰 함께 갱신합니다. Node는 기존 `22.18.0`을 사용합니다.
+Graph (2K)는 일반 CI에서 제외하고 `Release checks`의 `graph-2k` job에서 실행합니다.
+이 job은 `@pc10k`를 제외한 WebGL gate(`npm run test:graph-webgl -- --project=chromium`)와
+`DTXWIKI_E2E_GRAPH_2K=1` 실제 API 2K spec을 돌립니다. WebGL gate의 `@pc10k`
+케이스(`--project=chromium-pc10k`)는 같은 워크플로의 `graph-10k`가 담당합니다.
+대규모 입력으로 처리량·상한을 확인하는 backend 용량 검사는 `release_scale` marker를 붙입니다. PR의 `make test-backend`는 이를
 제외하고, `Release checks`의 `postgres-migration` job이 실행합니다(로컬:
 `make test-backend-scale`).
 실제 schema upgrade·downgrade·호환성 회귀 검사는 `release_migration` marker로 분리합니다.
 일반 backend CI와 serial lane에서는 제외하고, `Release checks`에서
 `VENV=.venv make test-migrations`로 SQLite·PostgreSQL을 함께 실행합니다. 일반 startup,
 inventory 단위 테스트와 제품 테스트의 DB 준비 fixture는 PR 검증에 유지합니다.
-`graph-10k`, `docker-frontend`, `packaging`, `postgres-migration`은 별도의
+`graph-2k`, `graph-10k`, `docker-frontend`, `packaging`, `postgres-migration`은 별도의
 `Release checks` 워크플로(`.github/workflows/release-checks.yml`)에서 실행합니다.
 `packaging` job에는 acceptance·release-gate 검증과 정제된 로그 업로드도 포함됩니다.
 
 기본 branch에 워크플로가 반영되면 GitHub Actions의 `Release checks` → `Run workflow`에서
 대상 branch를 선택해 [수동 실행](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)합니다.
 `v*` tag push로 시작하는 `release`
-워크플로는 같은 commit의 `Release checks`를 호출하고, 네 job이 모두 성공한 뒤
+워크플로는 같은 commit의 `Release checks`를 호출하고, 다섯 job이 모두 성공한 뒤
 패키지 빌드와 PyPI·npm 게시, GitHub Release 생성을 진행합니다. 수동 `Release checks`
 실행은 검증과 증거 업로드만 수행합니다.
 
@@ -330,7 +334,7 @@ npm run test:e2e
 # PR CI와 같은 project 분할. 아래 두 명령은 순서대로 실행합니다.
 npm run test:e2e -- --project=chromium
 npm run test:e2e -- --project=firefox --project=webkit
-# PR CI graph-2k job과 같은 범위
+# Release checks의 graph-2k job과 같은 범위
 npm run test:graph-webgl -- --project=chromium
 DTXWIKI_E2E_GRAPH_2K=1 npm run test:e2e -- tests/e2e/workspace_graph_2k_real.spec.ts \
   tests/e2e/workspace_graph_reading_real.spec.ts tests/e2e/workspace_graph_first_view.spec.ts \
@@ -446,7 +450,7 @@ Cursor 이전 시각의 지연 열람이나 미처리 backlog는 요청 안에�
 
 현재 schema head는 release manifest에서 읽습니다. 이미 배포된 revision은 수정하지
 않습니다. 여러 브랜치의 후속 migration은 merge revision으로 연결하고 schema·model
-일치를 검사합니다. 0.2.1의 미배포 migration 통합과 개발 DB 전환은 아래 릴리스
+일치를 검사합니다. 0.2.1·0.2.3의 미배포 migration 통합과 개발 DB 전환은 아래 릴리스
 migration 안내를 따릅니다.
 
 ## 설치 방식별 업데이트 방법
@@ -517,6 +521,14 @@ the database. A disposable test database may instead be recreated at a separate
 explicit path. Do not delete the normal data directory or use `alembic stamp`
 to bypass compatibility checks. Alembic tracks revision identity and does not
 rerun a changed implementation for a database already at its head.
+
+For 0.2.3, the unpublished Labs and Inbox changes are consolidated into
+`00ba02774c4a_release_0_2_3.py`, directly after the published `5b7e5c149279`
+boundary. A development database already at `00ba02774c4a` has the same final
+schema and does not rerun the migration. The removed intermediate revision
+`fec23ff328e6` is unsupported: use the original checkout to upgrade it to
+`00ba02774c4a`, then back up and verify the database before switching code.
+Do not use `alembic stamp` to bypass this requirement.
 
 For read-only revision evidence, use explicit targets instead of `bootstrap` or
 `alembic upgrade`:
@@ -648,7 +660,7 @@ make test-packaged                        # frontend + wheel build, packaged UI/
 
 # 검증은 wheel 파일이 아니라 dist 디렉터리를 받으며, 이전 빌드 잔여물이 섞이지 않도록 깨끗한 dist 에서 합니다.
 rm -rf dist && make build-wheel
-.venv/bin/python scripts/verify_wheel_artifact.py dist --release-version 0.2.2
+.venv/bin/python scripts/verify_wheel_artifact.py dist --release-version 0.2.3
 WHEEL="$(find dist -maxdepth 1 -name 'dtxwiki-*.whl' -print -quit)"
 sha256sum "$WHEEL" infra/prod/install.sh
 ```
@@ -656,7 +668,7 @@ sha256sum "$WHEEL" infra/prod/install.sh
 `verify_wheel_artifact.py` 는 릴리스 워크플로가 태그 시점에 돌리는 것과 같은 검사입니다 —
 SPA 번들과 그 index HTML이 참조하는 asset, alembic.ini, 배포된 migration·직접 초기화·
 helper의 고정 해시를 확인합니다. 추출본 안에서 Alembic graph를 실제로 걸어
-0.2.1 schema head `5b7e5c149279`와 release manifest를 대조합니다. 인자는 dist 디렉터리이며 wheel 경로를
+0.2.3 schema head `00ba02774c4a`와 release manifest를 대조합니다. 인자는 dist 디렉터리이며 wheel 경로를
 넘기면 사용법 오류(exit 2)입니다. 이미 만든 `dist/` 에 이전 빌드가 있으면(`make build-wheel` 은 그것을
 `dist/prev/` 로 옮깁니다) 검사 대상이 모호해지므로 위처럼 `rm -rf dist` 로 시작하세요.
 
@@ -666,7 +678,7 @@ Migration은 `backend/migrations/versions/v<major>_<minor>/<id>_<description>.py
 새 migration이 필요하지 않습니다. 새 파일은 다음 명령으로 생성합니다.
 
 ```bash
-.venv/bin/python scripts/new_migration.py --release 0.2.3 -m "add workspace settings"
+.venv/bin/python scripts/new_migration.py --release 0.2.4 -m "add workspace settings"
 ```
 
 보조 모듈이 필요하면 `revision_modules/v0_2/<id>_add_workspace_settings/`에
@@ -684,16 +696,17 @@ head가 하나여야 합니다. 기존 DB 업그레이드는 고정된 core revi
 패키지 검증기는 각 그래프와 고정 파일의 해시를 함께 확인합니다.
 
 새 DB의 `upgrade head`는 `initialization/versions/v0_2/5b7e5c149279_initial_schema.py`
-하나로 전체 v0.2.1 schema를 생성합니다. SQLite·PostgreSQL의 최종 DDL은
+하나로 v0.2.1 기준 schema를 생성한 뒤 후속 migration을 적용해 현재 head에 도달합니다. SQLite·PostgreSQL의 기준 DDL은
 `initialization/schema/`에 고정되어 있으며, 과거 table rebuild·backfill이나 현재 ORM
 metadata를 실행하지 않습니다. 비어 있음이 증명된 DB에서만 이 경로를 선택합니다.
-후속 schema 변경은 같은 `5b7e5c149279` 뒤에 추가합니다.
+후속 schema 변경은 현재 head 뒤에 추가해 이 초기화 경로에서도 이어서 적용합니다.
 
 기존 DB의 upgrade graph는 배포된 릴리스 경계 하나로만 이어집니다.
 
 ```text
 bd62193d5cf6 (0.0.1) → efcbcf724889 (0.1.1·0.1.2) → 19db79d3e622 (0.1.3)
-  → eb86fdacb1bb (0.1.4) → 5b7e5c149279 (0.2.1)
+  → eb86fdacb1bb (0.1.4) → 5b7e5c149279 (0.2.1·0.2.2)
+  → 00ba02774c4a (0.2.3)
 ```
 
 `versions/v0_1/eb86fdacb1bb_release_0_1_4.py`는 v0.1.4 태그의 파일과 같습니다.
@@ -709,7 +722,14 @@ schema로 정확히 돌아가며 0.1.4의 외부 로그인·계정 보존 데이
 직접 지정하지 않았다면 이 stamp는 남지 않습니다. 그 경로로 `5b7e5c149279`에 도달한
 DB는 schema가 같아 그대로 인식합니다.
 
-DB가 이미 `5b7e5c149279`이면 통합 migration을 다시 실행하지 않습니다.
+0.2.3은 미배포 Labs·Inbox 변경을 `00ba02774c4a_release_0_2_3.py` 하나로 통합해
+Workspace의 Labs 정책 컬럼과 Archived Inbox 조회용 partial index를 추가합니다.
+DB가 이미 `5b7e5c149279`이면 0.2.1 migration을 다시 실행하지 않고 이 단일 후속
+migration만 적용합니다. 배포된 0.2.2 경계와 그 이전 고정 파일은 바꾸지 않습니다.
+0.2.2는 DB 변경이 없어 0.2.1의 schema 경계를 사용합니다.
+최종 schema와 ID를 유지하므로 개발 DB가 이미 `00ba02774c4a`이면 그대로 인식합니다.
+제거된 `fec23ff328e6`은 `RETIRED_REVISION_IDS`에 등록하여 거부하며, 해당 DB는
+원래 checkout으로 `00ba02774c4a`에 도달하고 백업·검증한 뒤 전환합니다.
 제거된 미배포·개발 revision의 DB는 원래 checkout으로 먼저 최종 head에 도달하고,
 백업과 schema 검증을 마친 뒤 전환합니다. 임의로 stamp를 바꾸지 않습니다.
 
@@ -975,6 +995,33 @@ Saving checks citation syntax and the combined 500-document budget without
 registering Graph edges. Historical `@cite{source-key}` display tokens remain
 unchanged and receive an unresolved-link warning; replace them with permanent
 document addresses to register citations.
+
+Browser create and autosave requests set `share_draft: true` to save a shared,
+unpublished draft. Only browser-session authentication accepts this option;
+MCP creation and editing keep their private defaults. Before changing reference
+metadata, the editor stages an owned draft even when the body is unchanged.
+Reviewed versions are forked first. The browser can explicitly submit its
+shared draft through `submit-for-review`; saving alone does not request review.
+Browser publication of a mutable version requires both content and reference
+hashes. Browser image uploads also accept the owner's current unreviewed draft.
+`share_draft` never changes an existing version's visibility. Browser and MCP
+authentication resolve to the same human actor, so a browser save continues the
+shared draft line and lands on the caller's own private `editing` row only when
+the request names it as its base or session version. That row stays private,
+including through reference changes, until it is submitted or published.
+
+Saving a private `editing` row moves `current_version_id` and
+`latest_draft_version_id` only on a never-published page whose pointers name no
+version other people can read. Otherwise the pointers keep naming the shared
+head; authors reach their private edit through their own editing row
+(`version: "my_edit"` in MCP reads). Submitting a private edit while another
+shared draft holds `latest_draft_version_id` is refused as a conflict. A save by
+another actor skips a pointer that still names someone else's private row (older
+data or a reopened submission) and starts from the version that actor can read.
+
+REST detail and write responses carry `can_submit_for_review` for the calling
+actor; the editor enables **Request review** only when it is true. MCP tool
+schemas do not expose this field.
 References are returned separately from the authored body; do not append a
 second generated copy to the Markdown. Old claim-based cite inputs are rejected,
 and reindex does not discover historical citations or reinterpret Chats records.

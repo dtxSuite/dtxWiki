@@ -30,7 +30,6 @@ export type GraphActionFamily =
   | "authoring"
   | "governance"
   | "retrieval"
-  | "tool"
   | "other";
 
 export type GraphScene = {
@@ -156,9 +155,9 @@ export function graphActionFamily(actionKind?: string | null): GraphActionFamily
     "retrieved",
     "included",
     "cited",
+    "viewed",
     "referenced",
   ].includes(actionKind ?? "")) return "retrieval";
-  if (actionKind === "tool_produced") return "tool";
   return "other";
 }
 
@@ -287,26 +286,6 @@ const LEGACY_INSPECTOR_EDGE_KINDS = new Set([
   "co_access",
 ]);
 
-export function graphSceneToMermaid(scene: GraphScene) {
-  const nodeNames = new Map(
-    stableNodes(scene.nodes).map((node, index) => [node.id, `n${index}`]),
-  );
-  const lines = ["flowchart LR"];
-  for (const node of stableNodes(scene.nodes)) {
-    lines.push(`  ${nodeNames.get(node.id)}["${mermaidText(node.label)}"]`);
-  }
-  for (const edge of stableEdges(scene.edges)) {
-    const source = nodeNames.get(edge.source);
-    const target = nodeNames.get(edge.target);
-    if (!source || !target) {
-      continue;
-    }
-    const connector = edge.direction === "undirected" ? "---" : "-->";
-    lines.push(`  ${source} ${connector}|${mermaidText(edge.label)}| ${target}`);
-  }
-  return lines.join("\n");
-}
-
 function deriveTimelineScene(
   payload: GraphQueryPayload,
   cursor: number | null,
@@ -391,7 +370,7 @@ function timelineEdgeSnapshots(event: GraphTimelineEvent) {
   return event.edge_snapshots ?? [];
 }
 
-function stableNodes(nodes: GraphNode[]) {
+export function stableNodes(nodes: GraphNode[]) {
   return [...nodes].sort((left, right) =>
     Number(right.is_seed) - Number(left.is_seed)
       || left.family.localeCompare(right.family)
@@ -400,7 +379,7 @@ function stableNodes(nodes: GraphNode[]) {
   );
 }
 
-function stableEdges(edges: GraphEdge[]) {
+export function stableEdges(edges: GraphEdge[]) {
   return [...edges].sort((left, right) =>
     left.layer.localeCompare(right.layer)
       || left.label.localeCompare(right.label)
@@ -425,17 +404,6 @@ function relativeDirections(
     return ["in", "out"];
   }
   return sourceIsSeed ? ["out"] : ["in"];
-}
-
-function mermaidText(value: string) {
-  return value
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/\|/g, "&#124;")
-    .trim();
 }
 
 function isGraphNodeFamily(value: string): value is GraphNodeFamily {

@@ -2,15 +2,17 @@ import { createNodeBorderProgram } from "@sigma/node-border";
 import { NodeSquareProgram } from "@sigma/node-square";
 import Graph from "graphology";
 import Sigma from "sigma";
-import { NodeCircleProgram } from "sigma/rendering";
+import { NodeCircleProgram, createNodeCompoundProgram } from "sigma/rendering";
 import type { SigmaEdgeEventPayload, SigmaNodeEventPayload, SigmaStageEventPayload } from "sigma/types";
-import { colorToArray } from "sigma/utils";
+import { colorToArray, floatColor } from "sigma/utils";
 
 import type { GraphRenderScene, GraphPoint, GraphViewport } from "../shared/rendererTypes";
 import { createGraphHoverChip, GRAPH_EDGE_CHIP_OFFSET_PX, graphEdgeChipAnchor } from "../shared/hoverChip";
-import { readGraphTokens } from "../shared/graphTokens";
+import { GRAPH_NODE_VISUALS, GRAPH_REMOVED_EDGE_COLOR, readGraphTokens, type GraphNodeShape } from "../shared/graphTokens";
+import { FORCED_OUTLINE_INSETS, GRAPH_RING_GAP_PX, GRAPH_RING_WIDTH_PX, TRIANGLE_RADIUS_FACTOR, drawShapeRing } from "../shared/nodeShapes";
 import { LOCAL_EDGE_PROGRAMS } from "./edgePrograms";
 import { createLocalLayout, type LocalLayout } from "./layout";
+import { createLocateTrace } from "./locateTrace";
 import { buildLocalScene, type LocalScene, type LocalSceneNode, type LocalSceneEdge } from "./sceneInput";
 import { localNodeVisualKind } from "./nodeVisual";
 
@@ -40,6 +42,8 @@ export interface SigmaGraphAdapter {
   destroy(): void;
   fit(): void;
   focus(id: string | null): void;
+  /** Center on the current document and trace its ring once (not with reduced motion). */
+  locate(id: string): void;
   pin(id: string, pinned: boolean, position?: GraphPoint): GraphPoint | null;
   replaceScene(scene: GraphRenderScene): LocalSceneUpdate | void;
   reset(): void;
@@ -61,7 +65,7 @@ class LocalSquareNodeProgram extends NodeSquareProgram {
     (context, data, settings) => settings.defaultDrawNodeLabel(context, data, settings);
 }
 
-/** Rotate the square mesh: a distinct Agent glyph in every color mode. */
+/** Rotate the square mesh: the chat/activity glyph in every color mode. */
 class LocalDiamondNodeProgram extends LocalSquareNodeProgram {
   override getDefinition(): ReturnType<NodeSquareProgram["getDefinition"]> {
     const definition = super.getDefinition();
@@ -69,27 +73,128 @@ class LocalDiamondNodeProgram extends LocalSquareNodeProgram {
   }
 }
 
+// The square program's mesh with three vertices on a circle. Sigma's disc
+// radius is 2 × size in its corrected space, so the triangle's circumradius is
+// 2 × TRIANGLE_RADIUS_FACTOR × size; `scale` shrinks it for an inner outline.
+const TRIANGLE_VERTEX_SHADER = (scale: number) => `
+attribute vec4 a_id;
+attribute vec4 a_color;
+attribute vec2 a_position;
+attribute float a_size;
+attribute float a_angle;
+
+uniform mat3 u_matrix;
+uniform float u_sizeRatio;
+uniform float u_cameraAngle;
+uniform float u_correctionRatio;
+
+varying vec4 v_color;
+
+const float bias = 255.0 / 254.0;
+
+void main() {
+  float size = a_size * u_correctionRatio / u_sizeRatio * ${(2 * TRIANGLE_RADIUS_FACTOR * scale).toFixed(4)};
+  float angle = a_angle + u_cameraAngle;
+  vec2 diffVector = size * vec2(cos(angle), sin(angle));
+  vec2 position = a_position + diffVector;
+  gl_Position = vec4((u_matrix * vec3(position, 1)).xy, 0, 1);
+
+  #ifdef PICKING_MODE
+  v_color = a_id;
+  #else
+  v_color = a_color;
+  #endif
+
+  v_color.a *= bias;
+}
+`;
+
+/** A filled, upward triangle: one point in a document's history. */
+function createTriangleNodeProgram(scale = 1, colorAttribute: "color" | "surfaceColor" = "color") {
+  return class LocalTriangleNodeProgram extends LocalSquareNodeProgram {
+    override getDefinition(): ReturnType<NodeSquareProgram["getDefinition"]> {
+      const definition = super.getDefinition();
+      // Graph space points y up, so π/2 is the top vertex on screen.
+      const top = Math.PI / 2;
+      return {
+        ...definition,
+        VERTICES: 3,
+        VERTEX_SHADER_SOURCE: TRIANGLE_VERTEX_SHADER(scale),
+        CONSTANT_DATA: [[top], [top + (2 * Math.PI) / 3], [top + (4 * Math.PI) / 3]],
+      };
+    }
+
+    override processVisibleItem(nodeIndex: number, startIndex: number, data: Parameters<NodeSquareProgram["processVisibleItem"]>[2]) {
+      const array = this.array;
+      array[startIndex++] = data.x;
+      array[startIndex++] = data.y;
+      array[startIndex++] = data.size;
+      array[startIndex++] = floatColor(String((data as unknown as Record<string, unknown>)[colorAttribute] ?? data.color));
+      array[startIndex++] = nodeIndex;
+    }
+  };
+}
+// At or below this canvas width only the selected or focused conversation is titled.
+const COMPACT_LABEL_WIDTH_PX = 440;
+// The smallest share of its legend size a node shrinks to, so a far zoom-out
+// still shows a dot.
+export const LOCAL_MIN_NODE_SCALE = 0.2;
+
+/**
+ * How much of its legend size a node is drawn at.
+ *
+ * Glyphs keep their legend size wherever the scene fits at one screen pixel
+ * or more per layout unit, and grow on zoom-in by Sigma's √ rule. A scene that
+ * must be drawn smaller to fit (a large activity history) shrinks its glyphs
+ * by the same factor, and so does zooming out past the fit. The layout keeps
+ * nodes apart by their radius in layout units, so glyphs shrink with the
+ * distances and never overlap.
+ */
+export function localNodeSizeScale(pixelsPerUnit: number, cameraRatio: number): number {
+  const fitted = Math.min(1, pixelsPerUnit * cameraRatio);
+  const zoom = cameraRatio <= 1 ? Math.sqrt(cameraRatio) : cameraRatio;
+  return Math.max(LOCAL_MIN_NODE_SCALE, fitted / zoom);
+}
+
+const TriangleNodeProgram = createTriangleNodeProgram();
+// Forced colours: an Agent version keeps its triangle and gains the same thin
+// inner outline as an Agent disc (outer band, surface gap, inner fill).
+const OutlinedTriangleNodeProgram = createNodeCompoundProgram([
+  createTriangleNodeProgram(),
+  createTriangleNodeProgram(FORCED_OUTLINE_INSETS.triangle[0], "surfaceColor"),
+  createTriangleNodeProgram(FORCED_OUTLINE_INSETS.triangle[1]),
+], (context, data, settings) => settings.defaultDrawNodeLabel(context, data, settings), () => undefined);
+
 const FolderNodeProgram = createNodeBorderProgram({
   borders: [
     { size: { value: 0.24 }, color: { attribute: "color" } },
     { size: { fill: true }, color: { transparent: true } },
   ],
 });
+/** The seed's solid ink ring: this share of the drawn radius, inside the disc. */
+const SEED_RING_SHARE = 0.24;
 const SeedNodeProgram = createNodeBorderProgram({
   borders: [
-    { size: { value: 0.24 }, color: { attribute: "borderColor" } },
+    { size: { value: SEED_RING_SHARE }, color: { attribute: "borderColor" } },
     { size: { fill: true }, color: { attribute: "color" } },
   ],
 });
-// In forced colors, shape still distinguishes a conversation from a Context:
-// a bullseye, versus a solid point, Library square, and hollow folder ring.
-const ConversationNodeProgram = createNodeBorderProgram({
+// Forced colours: an Agent disc keeps a thin outline, gap and inner fill, so
+// it still differs from a Context disc when every colour is the same ink.
+const OutlinedCircleNodeProgram = createNodeBorderProgram({
   borders: [
-    { size: { value: 0.2 }, color: { attribute: "color" } },
-    { size: { value: 0.25 }, color: { attribute: "surfaceColor" } },
+    { size: { value: 1 - FORCED_OUTLINE_INSETS.circle[0] }, color: { attribute: "color" } },
+    { size: { value: FORCED_OUTLINE_INSETS.circle[0] - FORCED_OUTLINE_INSETS.circle[1] }, color: { attribute: "surfaceColor" } },
     { size: { fill: true }, color: { attribute: "color" } },
   ],
 });
+
+/** Sigma program per glyph; forced colours outline Agent shapes. */
+function nodeProgramType(shape: GraphNodeShape, forcedOutline: boolean): string {
+  if (forcedOutline && shape === "circle") return "outlinedCircle";
+  if (forcedOutline && shape === "triangle") return "outlinedTriangle";
+  return shape === "ring" ? "folder" : shape;
+}
 
 function finitePoint(point: GraphPoint | undefined): point is GraphPoint {
   return Boolean(point && Number.isFinite(point.x) && Number.isFinite(point.y));
@@ -152,6 +257,11 @@ export function createSigmaGraphAdapter(
   let contextLost = false;
   let restorationRequested = false;
   const chip = createGraphHoverChip(container, options.hoverChip);
+  let tracingKey: string | null = null;
+  const trace = createLocateTrace(container, () => {
+    tracingKey = null;
+    if (!destroyed && !contextLost) sigma.refresh({ skipIndexation: true });
+  });
   let hoverFrame: number | null = null;
   let hoverEvent: SigmaStageEventPayload["event"] | null = null;
   let pickedEdge: string | null = null;
@@ -169,6 +279,7 @@ export function createSigmaGraphAdapter(
   const paintedPriorityLabels = new Set<string>();
 
   const priorityLabelKeys = () => [...new Set([
+    ...localScene.nodes.filter((node) => node.isCurrent).map((node) => node.key),
     ...localScene.nodes.filter((node) => node.isSeed).map((node) => node.key).sort(),
     ...[selectedId, focusedId].flatMap((id) => {
       const key = id ? localScene.keyByGraphId.get(id) : undefined;
@@ -208,21 +319,26 @@ export function createSigmaGraphAdapter(
   };
 
   const nodeAttributes = (node: LocalSceneNode) => {
-    const kind = localNodeVisualKind(node.entityKind, node.family);
+    const visual = GRAPH_NODE_VISUALS[localNodeVisualKind(node.entityKind, node.family)];
+    const color = tokens.node[visual.color];
     return {
       size: node.radiusPx,
-      color: tokens.node[kind],
-      quietColor: quietColor(tokens.node[kind], tokens.surface),
+      color,
+      quietColor: quietColor(color, tokens.surface),
       borderColor: ink,
       surfaceColor: tokens.surface,
       quietBorderColor: quietColor(ink, tokens.surface),
       isSeed: node.isSeed,
+      isCurrent: node.isCurrent,
+      // Drawn last, above the dense centre where it is pinned.
+      zIndex: node.isCurrent ? 1 : 0,
       label: node.label,
-      type: node.isSeed ? "seed"
-        : kind === "library" ? "square"
-        : kind === "agent" ? "diamond"
-        : kind === "folder" ? "folder"
-        : kind === "conversation" && mode === "forced" ? "conversation" : "circle",
+      badge: node.badge,
+      session: node.session,
+      // The current document is the legend's "This document" glyph: its disc in
+      // a solid ink ring. Seeds added by expanding keep their own glyph.
+      shape: node.seedGlyph ? "circle" : visual.shape,
+      type: node.seedGlyph ? "seed" : nodeProgramType(visual.shape, visual.forcedOutline && mode === "forced"),
     };
   };
   const edgeAttributes = (edge: LocalSceneEdge, label: string) => ({
@@ -298,9 +414,11 @@ export function createSigmaGraphAdapter(
       circle: NodeCircleProgram,
       square: LocalSquareNodeProgram,
       diamond: LocalDiamondNodeProgram,
+      triangle: TriangleNodeProgram,
       seed: SeedNodeProgram,
       folder: FolderNodeProgram,
-      conversation: ConversationNodeProgram,
+      outlinedCircle: OutlinedCircleNodeProgram,
+      outlinedTriangle: OutlinedTriangleNodeProgram,
     },
     edgeProgramClasses: LOCAL_EDGE_PROGRAMS,
     defaultEdgeType: "link",
@@ -309,6 +427,7 @@ export function createSigmaGraphAdapter(
     hideLabelsOnMove: false,
     // The ordinary-label toggle must not suppress seed/active labels as well.
     renderLabels: true,
+    zIndex: true,
     renderEdgeLabels: true,
     defaultDrawEdgeLabel: (context, edge, source, target) => {
       if (!edge.forceLabel || !edge.label || edge.hidden) return;
@@ -334,6 +453,13 @@ export function createSigmaGraphAdapter(
     // Local points are intentionally tiny (3–13 CSS px). Sigma's default
     // size gate would suppress every label in a small real Context scene.
     labelRenderedSizeThreshold: 0,
+    // Sigma sizes every node through this one function: glyphs, picking,
+    // rings, labels and arrowheads.
+    zoomToSizeRatioFunction: (ratio) => {
+      const pixelsPerUnit = renderer?.getGraphToViewportRatio();
+      return pixelsPerUnit && Number.isFinite(pixelsPerUnit)
+        ? 1 / localNodeSizeScale(pixelsPerUnit, ratio) : 1;
+    },
     defaultDrawNodeLabel: function drawNodeLabel(context, data, settings) {
       // The constructor renders synchronously before its public handle exists.
       // A render-only refresh below owns that first visible label pass instead.
@@ -362,9 +488,13 @@ export function createSigmaGraphAdapter(
       // Priority is a visible-node contract, not a reason to pull offscreen
       // titles into the viewport or inherit labels from an old scene.
       if (forced && (data.x < 0 || data.x > viewportWidth || data.y < 0 || data.y > viewportHeight)) return;
-      const label = Array.from(data.label).slice(0, 24).join("");
+      // The current document's name is a chip and keeps more of its title.
+      const current = Boolean((data as { isCurrent?: boolean }).isCurrent);
+      const label = Array.from(data.label).slice(0, current ? 40 : 24).join("");
       const shortened = label.length < Array.from(data.label).length ? `${label}…` : label;
-      const offset = data.size + 5;
+      // A conversation's client badge is extra, outside its title's cut.
+      const badge = typeof data.badge === "string" && data.badge ? data.badge : null;
+      const offset = data.size + (current ? 6 : 5);
       const margin = Math.min(8, viewportWidth / 4);
       const roomRight = viewportWidth - data.x - offset - 8;
       const roomLeft = data.x - offset - 8;
@@ -374,16 +504,24 @@ export function createSigmaGraphAdapter(
       if (room < 18 && !forced) return;
       const fontSize = forced ? Math.min(settings.labelSize, Math.max(1, viewportHeight - 4)) : settings.labelSize;
       context.save();
-      context.font = `${settings.labelWeight} ${fontSize}px ${settings.labelFont}`;
+      const badgeFont = `600 ${Math.max(8, fontSize - 2)}px ${settings.labelFont}`;
+      context.font = badgeFont;
+      // Pill padding plus the gap to the title; dropped when the title would
+      // otherwise have no room left.
+      const badgeWidth = badge && room - context.measureText(badge).width - 12 >= 24
+        ? context.measureText(badge).width + 12 : 0;
+      context.font = `${current ? 700 : settings.labelWeight} ${fontSize}px ${settings.labelFont}`;
       context.textAlign = right ? "left" : "right";
       context.textBaseline = "middle";
+      const textRoom = room - badgeWidth;
       const graphemes = Array.from(shortened);
       let visible = shortened;
-      while (graphemes.length > 1 && context.measureText(visible).width > room) {
+      while (graphemes.length > 1 && context.measureText(visible).width > textRoom) {
         graphemes.pop();
         visible = `${graphemes.join("")}…`;
       }
-      const width = Math.min(room, context.measureText(visible).width);
+      const textWidth = Math.min(textRoom, context.measureText(visible).width);
+      const width = textWidth + badgeWidth;
       const anchorX = data.x + (right ? offset : -offset);
       const x = forced ? Math.max(right ? margin : margin + width,
         Math.min(right ? viewportWidth - margin - width : viewportWidth - margin, anchorX)) : anchorX;
@@ -418,13 +556,47 @@ export function createSigmaGraphAdapter(
         context.restore();
         return;
       }
-      labelBounds.push(chosen);
       const y = chosen.y;
+      if (current) {
+        // Ink chip with surface text: the canvas form of the list's seed badge.
+        const left = right ? x - 7 : x - width - 7;
+        const half = fontSize / 2 + 5;
+        labelBounds.push({ left: left - 2, right: left + width + 16, top: y - half - 2, bottom: y + half + 2 });
+        context.fillStyle = ink;
+        context.beginPath();
+        context.roundRect(left, y - half, width + 14, half * 2, 6);
+        context.fill();
+        context.fillStyle = tokens.surface;
+        context.fillText(visible, x, y, room);
+        context.restore();
+        if (forced && data.key) paintedPriorityLabels.add(data.key);
+        return;
+      }
+      labelBounds.push(chosen);
+      // Right of the node: [badge][title]; left of it: [badge][title] ending at x.
+      const textX = right ? x + badgeWidth : x;
+      if (badgeWidth > 0 && badge) {
+        const pillX = right ? x : x - textWidth - badgeWidth;
+        const pillHeight = Math.max(10, fontSize + 1);
+        context.save();
+        context.font = badgeFont;
+        context.fillStyle = tokens.surface;
+        context.beginPath();
+        context.roundRect(pillX, y - pillHeight / 2, badgeWidth - 4, pillHeight, pillHeight / 2);
+        context.fill();
+        context.globalAlpha = 0.14;
+        context.fillStyle = ink;
+        context.fill();
+        context.globalAlpha = 1;
+        context.textAlign = "center";
+        context.fillText(badge, pillX + (badgeWidth - 4) / 2, y + 0.5);
+        context.restore();
+      }
       context.lineWidth = 3;
       context.strokeStyle = tokens.surface;
-      context.strokeText(visible, x, y, room);
+      context.strokeText(visible, textX, y, textRoom);
       context.fillStyle = ink;
-      context.fillText(visible, x, y, room);
+      context.fillText(visible, textX, y, textRoom);
       context.restore();
       if (forced && data.key) paintedPriorityLabels.add(data.key);
     },
@@ -435,16 +607,23 @@ export function createSigmaGraphAdapter(
     nodeReducer: (key, data) => {
       const id = localScene.graphIdByKey.get(key);
       const presentation = id ? nodePresentation.get(id) : undefined;
-      const quiet = presentation?.muted || highlightedStar !== null && !highlightedStar.nodes.has(key);
+      // The current document never fades with a selection or activity: it is the reader's anchor.
+      const current = Boolean(data.isCurrent);
+      const quiet = !current && (presentation?.muted || highlightedStar !== null && !highlightedStar.nodes.has(key));
       const importantLabel = Boolean(data.isSeed || (id && [selectedId, focusedId].includes(id)));
+      // On a narrow canvas conversation titles would bury the documents; they
+      // show only for the selected or focused conversation.
+      const yieldsLabel = Boolean(data.session) && container.clientWidth <= COMPACT_LABEL_WIDTH_PX;
       return {
         ...data,
         hidden: presentation?.hidden ?? false,
-        type: presentation?.highlighted ? "seed" : data.type,
-        size: presentation?.highlighted ? Number(data.size) + 2 : data.size,
+        // A history event keeps its glyph; the ring layer marks it instead.
+        highlighted: Boolean(presentation?.highlighted),
+        // While its ink ring is traced, the current document draws only its disc.
+        ...(key === tracingKey ? { type: "circle" } : {}),
         color: quiet ? data.quietColor : data.color,
-        borderColor: presentation?.highlighted ? tokens.edge.action : quiet ? data.quietBorderColor : data.borderColor,
-        label: importantLabel || (showOrdinaryLabels && !quiet) ? data.label : null,
+        borderColor: quiet ? data.quietBorderColor : data.borderColor,
+        label: importantLabel || (showOrdinaryLabels && !quiet && !yieldsLabel) ? data.label : null,
         forceLabel: importantLabel,
       };
     },
@@ -455,7 +634,7 @@ export function createSigmaGraphAdapter(
         ...data,
         size: presentation?.highlighted ? 2.5 : hoveredId === key ? Number(data.size) * 1.5 : data.size,
         type: presentation?.removed ? "action" : data.type,
-        color: presentation?.removed ? "#dc2626" : presentation?.highlighted ? tokens.edge.action : quiet ? data.quietColor : data.color,
+        color: presentation?.removed ? GRAPH_REMOVED_EDGE_COLOR : presentation?.highlighted ? tokens.highlight : quiet ? data.quietColor : data.color,
         forceLabel: Boolean(presentation?.eventCaption),
         hidden: presentation?.hidden ?? false,
       };
@@ -463,6 +642,39 @@ export function createSigmaGraphAdapter(
   });
 
   const sigma = renderer;
+  // Emphasis rings sit above the glyphs and below the titles. Sigma sizes and
+  // clears nothing here, so each frame repaints only the current rings.
+  // Sigma accepts layer placement here at runtime; its declared type omits it.
+  // Its constructor already sized the built-in layers: size this one too.
+  sigma.createCanvasContext("rings", { afterLayer: "nodes" } as Parameters<Sigma["createCanvasContext"]>[1]);
+  sigma.resize(true);
+  const drawRings = () => {
+    const canvas = sigma.getCanvases().rings;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.restore();
+    if (destroyed || contextLost) return;
+    const active = activeId();
+    const activeKey = active ? localScene.keyByGraphId.get(active) : undefined;
+    for (const key of graph.nodes()) {
+      const display = sigma.getNodeDisplayData(key) as (ReturnType<typeof sigma.getNodeDisplayData> & { highlighted?: boolean }) | undefined;
+      const selected = key === activeKey;
+      if (!display || display.hidden || (!display.highlighted && !selected)) continue;
+      const attributes = graph.getNodeAttributes(key);
+      const center = sigma.graphToViewport({ x: Number(attributes.x), y: Number(attributes.y) });
+      const radius = sigma.scaleSize(display.size);
+      const shape = attributes.shape as GraphNodeShape;
+      if (display.highlighted) drawShapeRing(context, shape, center.x, center.y, radius, tokens.highlight, tokens.surface);
+      // A selected event target keeps both: the selection ring sits outside.
+      if (selected) {
+        drawShapeRing(context, shape, center.x, center.y, radius, tokens.selection, tokens.surface,
+          display.highlighted ? GRAPH_RING_GAP_PX + GRAPH_RING_WIDTH_PX : 0);
+      }
+    }
+  };
   sigma.on("beforeRender", () => {
     labelBounds.length = 0;
     priorityLabelsPrepared = false;
@@ -532,7 +744,22 @@ export function createSigmaGraphAdapter(
     hoveredId = null;
     chip.hide();
   }
-  sigma.on("afterRender", updateHoverChip);
+  // The trace follows its node through camera moves and layout settling.
+  function placeTrace() {
+    if (!trace.playing) return;
+    const display = tracingKey && graph.hasNode(tracingKey) ? sigma.getNodeDisplayData(tracingKey) : null;
+    if (!tracingKey || !display || display.hidden) { trace.place(null); return; }
+    const attributes = graph.getNodeAttributes(tracingKey);
+    const point = sigma.graphToViewport({ x: Number(attributes.x), y: Number(attributes.y) });
+    const outer = sigma.scaleSize(display.size);
+    const width = outer * SEED_RING_SHARE;
+    trace.place({ x: point.x, y: point.y, radius: outer - width / 2, width, color: String(attributes.borderColor) });
+  }
+  sigma.on("afterRender", () => {
+    drawRings();
+    updateHoverChip();
+    placeTrace();
+  });
   const endDrag = (cancelled = false) => {
     if (!draggingKey) return;
     const key = draggingKey;
@@ -739,6 +966,15 @@ export function createSigmaGraphAdapter(
   sigma.refresh({ partialGraph: { nodes: [], edges: [] }, skipIndexation: true });
 
   return {
+    locate(id) {
+      if (destroyed || contextLost) return;
+      this.centerOn(id);
+      const key = localScene.keyByGraphId.get(id);
+      if (options.reducedMotion || !key || !graph.hasNode(key) || !graph.getNodeAttribute(key, "isCurrent")) return;
+      tracingKey = key;
+      trace.play();
+      sigma.refresh({ skipIndexation: true });
+    },
     centerOn(id) {
       if (destroyed || contextLost) return;
       const key = localScene.keyByGraphId.get(id);
@@ -768,6 +1004,7 @@ export function createSigmaGraphAdapter(
       destroyed = true;
       clearHover();
       chip.destroy();
+      trace.destroy();
       draggingKey = null;
       layout?.destroy();
       for (const canvas of contextCanvases) {

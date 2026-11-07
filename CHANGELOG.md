@@ -2,6 +2,160 @@
 
 ## Unreleased
 
+## 0.2.3 — 2026-11-07
+
+Beta update with shared browser drafts, clearer graph navigation and legends,
+Inbox improvements, and workspace-saved Labs and Lint settings. Installation
+and package metadata now target 0.2.3.
+
+### Shared browser drafts
+
+- Keep browser Context saves and reference additions or removals in shared,
+  unpublished drafts visible to Editors and Owners. MCP editing stays private.
+- Allow explicit review submission of a shared browser draft. Reference edits
+  fork reviewed versions and preserve their evidence; publication checks both
+  the body and reference fingerprints.
+- Browser saves and reference changes never share a user's own private edit,
+  such as one opened over MCP; **Request review** or **Publish** shares it.
+- Saving a private edit no longer takes over the page's draft. Other Editors
+  keep seeing and continuing the shared draft, and can start one while an MCP
+  edit is open.
+- Enable **Request review** only for the draft's author, and say when a later
+  save withdraws a pending review request.
+
+### Graph legend
+
+- Use one node vocabulary in the Context graph, the Knowledge Map, their
+  legends, lists and chips: circles for edited documents (Context purple,
+  Agent amber), filled triangles for document versions, squares for Library
+  material, sky-blue diamonds for chat and activity records, and grey rings
+  for folders and Map clusters. In forced colours an Agent keeps its shape
+  with a thin inner outline.
+- Mark a history event target and the selected node with a ring that follows
+  the node's shape, instead of turning the node into a circle; the Map's
+  selection ring follows Library squares too.
+- Draw read-together lines in sky blue, folder membership in a grey that meets
+  3:1 contrast, and action lines in dark grey; timeline version marks are
+  triangles and activity marks share the chat/activity colour.
+- Show a fixed legend for each mode (current relationships, history, Map) with
+  the relationship names each line draws, without the arrow and action-glyph
+  columns. Map legend lines match the map and use the Link and Citation names.
+- Define the graph colour tokens once for the light, dark and forced-colours
+  themes, so legends, lists and chips outside the canvas follow dark mode.
+- Draw the Context graph's static view in the same vocabulary: cards tinted
+  in each node's colour with its legend glyph before the title, the current
+  document as a filled card, and lines in their legend colour, dash and weight.
+  The static view now spans the full graph width, and **Export filtered
+  graph** writes the same styles.
+
+### Inbox
+
+- Allow every Inbox item to be archived and moved back to the Inbox, including
+  reviews awaiting action, workspace join requests/results and Access Key
+  expiry notices, under one rule for all kinds. Archived lists newest archive
+  first and pages through every archived item; read marks do not reorder it.
+- Show when each item leaves on its own: a chip with the remaining time where
+  the server states an end date, otherwise an info button. Either one opens the
+  kind's full condition. Archived explains once that archiving does not extend
+  an item's visibility or keep it after its source disappears.
+- Show Inbox items in two lines under "Live" and "Messages" headings, with icon
+  actions, and explain an empty scan that still has older items to check.
+- Label the workspace scope "Workspace" and show the workspace's name beside
+  it, shortened when long with the full name on hover.
+- Look up the items of a listed page in one batched source query per kind
+  instead of one query per item.
+- Refill capped Inbox lists after marks while retaining loaded message pages.
+  Update removal countdowns while the screen is open and refresh loaded pages
+  when an item's stated visibility ends. If the server still lists the item,
+  for example because its clock runs behind the browser's, refresh again after
+  5 seconds, 30 seconds and 2 minutes, then stop.
+- Migration `00ba02774c4a` adds partial indexes on archived entries of
+  `workspace_inbox_entry` and `account_inbox_entry` in Archived list order, so
+  an Archived page no longer reads and sorts the recipient's whole history.
+
+### Context graph tab
+
+- Mark the document the Graph tab is opened from with the legend's "This
+  document" glyph on its map: its Context disc in a solid ink ring, at its
+  relation-count size, with its name on a dark chip, drawn above other points
+  and never faded by a selection. Documents added by expanding keep their own
+  glyph. The seed pill shows that glyph and the document's name (after Expand
+  it named the expanded one), moves the view to it and traces the ink ring
+  once (not with reduced motion).
+- Show the Graph tab's list in the canvas area through a Graph | List switch,
+  so a selected item's Details open beside the list, also in fullscreen. The
+  list starts from the seed document's incoming and outgoing relations, then
+  folds what the relation scope adds (relations between neighbors, two-step
+  items and relations, items not connected to the seed), ten rows at a time
+  with one search box. The title, counts and search stay at the top while the
+  list scrolls, names wrap to two lines before they are cut, and the chosen
+  row stays in view when Details opens beside the list.
+- Show a selected node's relations in Details as one searchable flow (incoming,
+  this item, outgoing; five per direction) and how the item is reached from the
+  seed, replacing the separate neighbor, member and folder lists. A relation
+  chip on that path opens the relation's own Details.
+- Share the Knowledge Map sidebar's chips, relation rows and flow with the Graph
+  tab; the map sidebar looks the same.
+- Keep the retained citation evidence table readable in the Details panel
+  instead of squeezing its second column to a letter's width.
+- Keep long Knowledge Map details inside their panel and the filter panel's
+  Cancel/Apply footer flush with its bottom edge, including on phones.
+
+### Labs settings
+
+- Save Ask, Agent, and Knowledge Map settings on the server for each workspace
+  with **Save changes** and **Discard**, replacing browser-local preferences.
+  Reload saved settings on window focus.
+- Limit configuring and using these browser experiments to workspace Owners.
+  Enforce the saved policy in navigation, browser routes, and REST endpoints;
+  MCP tools keep their separate policy. Experiments start off by default.
+- Mark Preview features with a flask chip and an explanatory tooltip in
+  navigation, tabs, settings, and graph controls.
+
+### Lint settings
+
+- Turn the Orphan page and Missing backlink checks off by default, including
+  in existing workspaces that never changed them. Their open findings leave
+  the lint queue until an Owner turns the checks on in Settings.
+- Edit lint settings as a draft and apply them with **Save changes** in one
+  revision-checked save; **Discard** reverts them. If the settings changed
+  elsewhere, the latest values load and your edits are kept for another save.
+- Split the lint settings card into save-time options and checks. Each option
+  states its current effect, and what it will do once an edit is saved.
+  While edits are pending, the save bar stays at the bottom of the screen and
+  edited rows are marked. Checks show a summary while folded, mark checks
+  that are off by default, and fold the ones that are always on or external.
+  Members who cannot edit see each setting as On or Off.
+
+### Chats
+
+- Keep flow-node hover and selected backgrounds translucent so they retain
+  their visual state without obscuring the underlying flow.
+
+### Database upgrade
+
+- Consolidate the unpublished workspace Labs policy and archived Inbox indexes
+  into one release migration, `00ba02774c4a_release_0_2_3.py`, directly after the
+  released `5b7e5c149279` boundary. Existing 0.2.1 and 0.2.2 databases apply this
+  migration; fresh installs initialize at the frozen 0.2.1 schema first.
+  Preserve the published migration implementations.
+- Keep the terminal revision `00ba02774c4a` and its final schema, so development
+  databases already there do not rerun the migration. Retire the unpublished
+  intermediate `fec23ff328e6`; databases at that revision must reach
+  `00ba02774c4a` with the original checkout, then be backed up and verified
+  before switching. Do not bypass this with `alembic stamp`.
+- Stop the server and worker and take a verified backup before upgrading.
+  Run `dtxwiki inputs audit` and `dtxwiki bootstrap` against the same database.
+  Rollback requires the matching code and its pre-upgrade backup.
+
+### Release validation
+
+- Run the 2K graph browser and WebGL checks in Release checks alongside the
+  existing 10K graph gates, outside ordinary PR CI.
+- Run standard browser E2E checks in a pinned Playwright container with its
+  browser dependencies preinstalled. Upgrade GitHub Actions checkout to its
+  Node.js 24 runtime while keeping the project toolchain on Node.js 22.18.0.
+
 ## 0.2.2 — 2026-11-06
 
 Patch release fixing upgrades from published databases and initialization of

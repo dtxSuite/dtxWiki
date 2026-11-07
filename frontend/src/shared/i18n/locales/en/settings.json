@@ -36,7 +36,9 @@
     "account": "Your account",
     "system": "System administration",
     "adminChip": "System admin",
-    "adminChipTitle": "Server-wide setting, visible to server admins only — not scoped to this workspace."
+    "adminChipTitle": "Server-wide setting, visible to server admins only — not scoped to this workspace.",
+    "workspaceAdminChip": "Workspace admin",
+    "workspaceAdminChipTitle": "Workspace setting, visible only to administrators of this workspace."
   },
   "sections": {
     "workspace": {
@@ -59,7 +61,7 @@
       "label": "Agent injection",
       "description": "What rules and Agent pages reach the AI.",
       "previewBadge": "Preview",
-      "previewDescription": "Preview: this area is still being refined."
+      "previewDescription": "Labs preview: this area is still being refined and may change."
     },
     "review": {
       "label": "Review policy",
@@ -96,7 +98,7 @@
     },
     "labs": {
       "label": "Labs",
-      "description": "Choose which experimental menus appear."
+      "description": "Manage experimental features for this workspace."
     }
   },
   "crossLinks": {
@@ -598,12 +600,12 @@
   },
   "lint": {
     "eyebrow": "Lint rules",
-    "description": "Choose how saves are cleaned up and how safe link fixes enter review or publication.",
+    "description": "Choose what is cleaned up on save, how safe link fixes are approved, and which checks run.",
     "requiredSafeguard": "Required safeguard",
     "externalSource": "External source",
     "loading": "Loading lint rules…",
     "loadError": "Failed to load lint rules.",
-    "saveError": "Failed to update the rule.",
+    "saveError": "Failed to save lint settings. Your changes have been kept.",
     "layer": {
       "format": "Format",
       "knowledge": "Knowledge",
@@ -611,10 +613,7 @@
       "maintenance": "Maintenance"
     },
     "autoFix": "Auto-fix safe formatting on save",
-    "openQueue": "Open lint queue",
     "autoFixHint": "Clean up heading and list-marker spacing, trailing whitespace, extra blank lines, and table alignment on authored Context saves. Protected code and wording are preserved.",
-    "enabledOfTotal": "{{enabled}} of {{total}} shown toggleable on",
-    "toggleLayerAria": "Toggle shown {{layer}} checks",
     "saved": "Saved",
     "empty": "No lint rules",
     "emptyHint": "This server reports no checks.",
@@ -624,13 +623,13 @@
     "linkFixSuggest": "Suggest only",
     "autoApproveLinkFixes": "Automatically approve safe link fixes",
     "autoApproveLinkFixesHint": "Immediately approve safe fix-only changes on authored saves and published maintenance when existing review safeguards pass. Other changes follow the normal Review policy.",
-    "policyLoadError": "Lint options could not be loaded. Editing is disabled until their values are confirmed.",
+    "policyLoadError": "Lint options could not be loaded. Saved settings still apply; editing is disabled until their values are confirmed.",
     "policyLoading": "Loading lint options…",
     "retryPolicies": "Retry options",
     "retryRules": "Retry checks",
     "saveGroup": "Clean up on save",
     "reviewGroup": "Review and publication",
-    "currentEffect": "Current effect",
+    "revisionConflict": "Lint settings changed elsewhere. The latest settings have been loaded and your edits kept. Review them before saving again.",
     "effectLinksAuto": "Automatic link fixing also participates in safe repairs of published documents.",
     "effectLinksSuggest": "Ordinary internal links receive suggestions. Link repairs do not start published maintenance.",
     "effectFormatOn": "Safe formatting runs on authored Context saves and accompanies published link repairs. Safe formatting-only saves may be approved immediately, even when link-fix approval is off; existing review safeguards still apply. Formatting alone never starts a published repair.",
@@ -643,7 +642,32 @@
     "searchRules": "Search checks",
     "noMatches": "No matching checks.",
     "unknownValue": "Not loaded",
-    "optionSaveError": "Failed to update the option."
+    "readOnlyNotice": "Only workspace owners can change these. This is what applies to this workspace now.",
+    "optionsTitle": "Clean-up and approval on save",
+    "stateOn": "On",
+    "stateOff": "Off",
+    "changed": "Changed",
+    "effectNow": "Now",
+    "effectNext": "After saving",
+    "queueLink": "See what these checks found",
+    "checksSummary": "{{enabled}} of {{total}} optional checks on",
+    "defaultOffCount": "Off by default: {{count}}",
+    "lockedCount": "Always on or external: {{count}}",
+    "changedCount": "Changed: {{count}}",
+    "showChecks": "Show all checks ({{count}})",
+    "searchPlaceholder": "Search by name or description",
+    "groupCount": "{{enabled}} of {{total}} on",
+    "groupCountShown": "{{enabled}} of {{total}} shown on",
+    "groupReadOnly": "Read-only",
+    "layerAllOn": "Turn all on",
+    "layerAllOff": "Turn all off",
+    "layerShownOn": "Turn all shown on",
+    "layerShownOff": "Turn all shown off",
+    "layerActionAria": "{{action}}: {{layer}}",
+    "defaultOff": "Off by default",
+    "defaultOffNote": "Checks that are off by default run only after this workspace turns them on.",
+    "dirtySummary": "Unsaved changes: {{count}} · Save to apply them to this workspace",
+    "showChecksPending": "Show all checks"
   },
   "summary": {
     "workspace": "The name, owner, and default language for this workspace.",
@@ -652,7 +676,7 @@
     "contextWrite": "When knowledge pages can be drafted and published.",
     "agentInjection": "Choose which Agent pages and workspace rules are sent to the AI.",
     "review": "Control review risk scoring, manual review thresholds, risk rules, and per-risk auto-approval delays.",
-    "graph": "Choose whether members can open the workspace-wide Knowledge Map."
+    "graph": "Manage the workspace Knowledge Map and relationship signals."
   },
   "policy": {
     "cardTitles": {
@@ -663,7 +687,8 @@
       "agent_injection": "Agent injection policy",
       "review": "Review risk policy",
       "lint": "Lint rules",
-      "graph": "Knowledge graph"
+      "graph": "Knowledge graph",
+      "labs": "Experimental features"
     },
     "workspace": {
       "title": {
@@ -689,10 +714,6 @@
       "decision": {
         "label": "Review decision",
         "hint": "How workspace policy changes are handled."
-      },
-      "askRetrievalMode": {
-        "label": "Ask retrieval mode",
-        "hint": "Automatic uses the best mode this server can serve; a fixed choice falls back with a notice when it cannot."
       }
     },
     "library": {
@@ -1113,11 +1134,25 @@
     "graph": {
       "workspaceMapEnabled": {
         "label": "Workspace Knowledge Map",
-        "hint": "Let members open the map of published Context and Library documents in this workspace. The Graph tab on each document stays available either way."
+        "hint": "Allow workspace administrators to open the Knowledge Map. Document Graph tabs remain available independently."
       },
       "usageRelationSignalsEnabled": {
         "label": "Read-together relationships",
         "hint": "Show documents that an MCP conversation read one after another, with no more than 30 minutes between reads, as “read together” relationships in Graph tabs, with how many conversations did so and over how many days. Turning this off hides them from Graph tabs at once and removes them everywhere at the next background run, usually within minutes; no new lint link suggestions are made from them. The MCP read history is kept, so turning this back on rebuilds them."
+      }
+    },
+    "labs": {
+      "askEnabled": {
+        "label": "Ask",
+        "hint": "Allow workspace administrators to use Ask in this workspace."
+      },
+      "agentEnabled": {
+        "label": "Agent",
+        "hint": "Allow workspace administrators to use Agent in this workspace."
+      },
+      "askRetrievalMode": {
+        "label": "Ask retrieval mode",
+        "hint": "Automatic uses the best mode this server can serve; a fixed choice falls back with a notice when it cannot."
       }
     }
   },
@@ -2073,7 +2108,8 @@
     "status": {
       "enabled": "Knowledge Map is on for this workspace.",
       "disabled_by_workspace": "Knowledge Map is off for this workspace.",
-      "service_unavailable": "Knowledge Map is temporarily turned off on this server, whatever this setting says."
+      "service_unavailable": "Knowledge Map is temporarily turned off on this server, whatever this setting says.",
+      "permission_denied": "Only workspace administrators can use Knowledge Map."
     }
   },
   "workspacePicker": {
@@ -2114,13 +2150,9 @@
     "expiry": "Expiry"
   },
   "labs": {
-    "title": "Experimental menus",
-    "description": "These features are still being developed. Turn on the menus you want to try.",
-    "showKnowledgeMap": "Show Knowledge Map menu",
-    "knowledgeMapHint": "Also requires a workspace owner to enable Knowledge Map in Settings > Workspace > Knowledge graph.",
-    "showAsk": "Show Ask menu",
-    "showAgent": "Show Agent menu",
-    "savedLocally": "Changes apply immediately and are saved for your account in this browser."
+    "description": "These experimental features are available only to workspace administrators. Changes apply to this workspace after you save.",
+    "ownerOnly": "Only workspace administrators can manage and use Labs features.",
+    "loading": "Loading workspace Labs settings…"
   },
   "userDeletion": {
     "action": "Delete account",

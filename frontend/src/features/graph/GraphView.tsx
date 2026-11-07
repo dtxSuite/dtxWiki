@@ -1,23 +1,32 @@
-import { Clock3, Download, Focus, Layers, List, Maximize2, Minimize2, MoreHorizontal, RefreshCw, RotateCcw, SlidersHorizontal, X } from "lucide-react";
+import { Clock3, Download, Focus, Layers, List, Maximize2, Minimize2, MoreHorizontal, Network, RefreshCw, RotateCcw, SlidersHorizontal, X } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
-import { MarkdownView } from "../pages/MarkdownView";
-import { LOCAL_EDGE_VISUAL_KIND_ORDER, localEdgeVisualKind } from "./local/edgeKinds";
-import { localNodeVisualKind } from "./local/nodeVisual";
+import { MermaidDiagram } from "../pages/MarkdownView";
+import { LOCAL_EDGE_VISUAL_KIND_ORDER, localEdgeKindsFor, localEdgeVisualKind } from "./local/edgeKinds";
+import { decorateStaticDiagramSvg, graphSceneToMermaid, type StaticDiagramVisuals } from "./local/staticDiagram";
 import { GraphCameraControls, GraphPreviewBadge, GraphScopeSelector, GraphTypeSelector, eventInvolves } from "./local/LocalGraphChrome";
-import { LocalGraphTimeline } from "./local/LocalGraphTimeline";
+import { LocalGraphTimeline, LocalTimelineMark } from "./local/LocalGraphTimeline";
 import { timelinePresentation } from "./local/timelinePresentation";
 import { historySceneCatalog, renderHistoryScene } from "./local/historyScene";
 import { LocalGraphCoverageInfo } from "./local/LocalGraphCoverageInfo";
 import { CitationEvidenceSection, type CitationPair } from "./shared/CitationEvidenceSection";
-import { LocalGraphList, type LocalGraphSelectionOrigin } from "./local/LocalGraphList";
+import { analyzeLocalScene, type LocalSceneAnalysis } from "./local/localGraphList";
+import { LocalGraphListView, type LocalListMemory } from "./local/LocalGraphListView";
+import { LocalNodeMeta, LocalRelationEnds, LocalRelationFlow, LocalSeedPath } from "./local/LocalGraphDetailsParts";
+import { useFocusRecovery } from "./local/useFocusRecovery";
+import type { LocalNodeVisuals } from "./local/LocalNodeCue";
+import { localEdgeKindLabel, type LocalViewContext } from "./local/localRelationViews";
+import type { RovingSelectionOrigin as LocalGraphSelectionOrigin } from "./shared/relationList/useRovingList";
 import { localSceneScopeKey } from "./local/sceneScope";
-import { buildSceneNavigation, type SceneNavigation } from "./sceneNavigation";
-import { GRAPH_EDGE_PATTERN, readGraphTokens, type GraphEdgeVisualKind, type GraphNodeVisualKind, type GraphVisualTokens } from "./shared/graphTokens";
+import { GraphEdgeCue, GraphNodeCue, GraphSeedCue } from "./shared/GraphCues";
+import { GRAPH_NODE_VISUALS, isActionEdgeVisualKind, readGraphTokens, type GraphEdgeVisualKind, type GraphNodeVisualKind } from "./shared/graphTokens";
+import { hasSessionDetails, SessionActivityDetails } from "./shared/SessionActivityDetails";
+import { isSessionGroupNode, isSessionNode } from "./shared/sessionNodes";
+import { sessionRelationSummary, versionOutcome, withSessionLabels } from "./sessionActivity";
 import type { GraphRenderScene } from "./shared/rendererTypes";
 import type {
   GraphEdge,
@@ -41,9 +50,7 @@ import {
 import {
   coAccessSentence,
   deriveGraphScene,
-  graphActionFamily,
   graphFacets,
-  graphSceneToMermaid,
   sortedTimeline,
   type GraphFilters,
   type GraphScene,
@@ -67,7 +74,6 @@ type GraphViewProps = {
 // Match Mermaid's default parsing limit. Larger Local scenes keep the
 // complete text fallback rather than mounting a diagram that cannot render.
 const STATIC_DIAGRAM_EDGE_LIMIT = 500;
-type LocalNodeVisuals = { tokens: GraphVisualTokens; forcedColors: boolean };
 
 export function GraphView({
   active,
@@ -76,12 +82,17 @@ export function GraphView({
   onRefresh,
   onExpand,
   onHistoryModeChange,
-  payload,
-  staticPayload = payload,
+  payload: wirePayload,
+  staticPayload: wireStaticPayload = wirePayload,
   workspaceGraphHref,
   workspaceId = null,
 }: GraphViewProps) {
   const { t } = useTranslation("graph");
+  const { t: tChats } = useTranslation("chats");
+  // Conversations are named once here, as their own screens name them.
+  const payload = useMemo(() => withSessionLabels(wirePayload, t, tChats), [t, tChats, wirePayload]);
+  const staticPayload = useMemo(() => wireStaticPayload === wirePayload ? payload
+    : withSessionLabels(wireStaticPayload, t, tChats), [payload, t, tChats, wirePayload, wireStaticPayload]);
   const canvasRef = useRef<GraphCanvasHandle | null>(null);
   const graphRegionRef = useRef<HTMLElement | null>(null);
   const selectionOriginRef = useRef<{
@@ -97,8 +108,12 @@ export function GraphView({
   const [showFuture, setShowFuture] = useState(false);
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
   const [dismissedCoverageKey, setDismissedCoverageKey] = useState<string | null>(null);
-  const [historyVisibility, setHistoryVisibility] = useState({ recorded: true, background: true });
+  // Structure-only looks (outline, structure map) are counted but start hidden.
+  const [historyVisibility, setHistoryVisibility] = useState({ recorded: true, background: true, referenced: false });
   const [listOpen, setListOpen] = useState(false);
+  // The list's search, open groups and pages, kept while the canvas shows.
+  const listMemoryRef = useRef<LocalListMemory | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const [legendOpen, setLegendOpen] = useState(false);
   useEffect(() => {
     const change = () => setFullscreen(document.fullscreenElement === frameRef.current);
@@ -139,6 +154,7 @@ export function GraphView({
   const forcedColors = useMediaQuery("(forced-colors: active)");
   const tokens = useLocalGraphTokens(graphRegionRef, forcedColors);
   const nodeVisuals = useMemo(() => ({ tokens, forcedColors }), [tokens, forcedColors]);
+  const staticVisuals = useMemo<StaticDiagramVisuals>(() => ({ tokens, forcedColors }), [tokens, forcedColors]);
   const expansionAvailability = payload.capabilities?.expand === false
     ? "unsupported"
     : payload.query.seeds.length >= 8
@@ -149,14 +165,17 @@ export function GraphView({
   const range: GraphRange = historical || payload.query.relation_scope === "direct" ? "direct"
     : payload.query.depth === 2 ? "extended" : "neighbors";
   const depthBusy = Boolean(busyAction?.startsWith("depth:") || busyAction?.startsWith("mode:"));
-  const recordedEdgeIds = useMemo(() => new Set([
-    ...sortedTimeline(payload).flatMap((event) => [...(event.edge_ids ?? []), ...(event.edge_snapshots ?? []).map((edge) => edge.id)]),
-    ...payload.edges.filter((edge) => localEdgeVisualKind(edge.edge_kind) === "action").map((edge) => edge.id),
-  ]), [payload]);
-  const applyHistoryVisibility = useCallback((value: GraphScene): GraphScene => !historical ? value : ({
-    ...value,
-    edges: value.edges.filter((edge) => recordedEdgeIds.has(edge.id) ? historyVisibility.recorded : historyVisibility.background),
-  }), [historical, historyVisibility, recordedEdgeIds]);
+  const historyTopology = useMemo(() => buildHistoryTopology(payload), [payload]);
+  const staticHistoryTopology = useMemo(() => staticPayload === payload ? historyTopology : buildHistoryTopology(staticPayload),
+    [historyTopology, payload, staticPayload]);
+  const { recordedEdgeIds } = historyTopology;
+  const referencedCount = useMemo(() => payload.edges.filter((edge) => edge.action_kind === "referenced").length, [payload]);
+  const applyHistoryVisibility = useCallback((value: GraphScene, topology = historyTopology): GraphScene => {
+    if (!historical) return value;
+    const edges = value.edges.filter((edge) => (edge.action_kind !== "referenced" || historyVisibility.referenced)
+      && (topology.recordedEdgeIds.has(edge.id) ? historyVisibility.recorded : historyVisibility.background));
+    return withoutDetachedSessions(value.nodes, edges, topology);
+  }, [historical, historyTopology, historyVisibility]);
   const timeline = useMemo(
     () => localizedGraphTimeline(payload, filters, t, applyHistoryVisibility),
     [applyHistoryVisibility, filters, payload, t],
@@ -186,7 +205,19 @@ export function GraphView({
   const scene = useMemo(() => localizedGraphScene(filteredScene, t), [filteredScene, t]);
   const historyCatalog = useMemo(() => localizedGraphScene(applyHistoryVisibility(historySceneCatalog(payload, filters)), t),
     [applyHistoryVisibility, filters, payload, t]);
-  const sceneNavigation = useMemo(() => buildSceneNavigation(scene), [scene]);
+  const sceneAnalysis = useMemo(() => analyzeLocalScene(scene, payload.query.seeds), [payload.query.seeds, scene]);
+  // The document the graph is opened from is the primary query seed; seeds
+  // added by expanding follow it and are not the current document.
+  const currentNode = useMemo(() => {
+    const primary = payload.query.seeds[0];
+    return primary ? payload.nodes.find((node) => node.entity_kind === primary.kind && node.entity_id === primary.id) ?? null : null;
+  }, [payload.nodes, payload.query.seeds]);
+  const listContext = useMemo<LocalViewContext>(() => ({
+    currentId: currentNode?.id ?? null,
+    hrefFor: (node) => nodeHref(node, workspaceId ?? null),
+    t,
+    visuals: nodeVisuals,
+  }), [currentNode, nodeVisuals, t, workspaceId]);
   const canvasScene = useMemo<GraphRenderScene>(() => {
     const hoveredIndex = timeline.findIndex((event) => event.id === hoveredEventId);
     const eventIndex = hoveredIndex >= 0 ? hoveredIndex : visibleCursor;
@@ -203,16 +234,21 @@ export function GraphView({
         : withCoAccessLabels(scene, t)),
       scopeKey: canvasScopeKey,
       freezeLayout: historical,
+      currentId: currentNode?.id ?? null,
     };
-  }, [applyHistoryVisibility, canvasScopeKey, filters, historical, historyCatalog, hoveredEventId, payload, scene, showFuture, t, timeline, visibleCursor]);
+  }, [applyHistoryVisibility, canvasScopeKey, currentNode, filters, historical, historyCatalog, hoveredEventId, payload, scene, showFuture, t, timeline, visibleCursor]);
   const staticScene = useMemo(() => localizedGraphScene(applyHistoryVisibility(
-    deriveGraphScene(staticPayload, filters, timelineCursor)), t),
-  [applyHistoryVisibility, filters, staticPayload, t, timelineCursor]);
-  const mermaidSource = useMemo(
+    deriveGraphScene(staticPayload, filters, timelineCursor), staticHistoryTopology), t),
+  [applyHistoryVisibility, filters, staticHistoryTopology, staticPayload, t, timelineCursor]);
+  const staticDiagram = useMemo(
     () => staticOpen && staticScene.edges.length <= STATIC_DIAGRAM_EDGE_LIMIT
-      ? graphSceneToMermaid(staticScene)
+      ? graphSceneToMermaid(staticScene, staticVisuals, { iconSlot: true })
       : null,
-    [staticScene, staticOpen],
+    [staticScene, staticOpen, staticVisuals],
+  );
+  const decorateStaticSvg = useCallback(
+    (svg: string) => staticDiagram ? decorateStaticDiagramSvg(svg, staticDiagram.nodes, staticVisuals) : svg,
+    [staticDiagram, staticVisuals],
   );
   const selectedNode = scene.nodes.find((node) => node.id === selectedId)
     ?? (historical ? historyCatalog.nodes.find((node) => node.id === selectedId) : null) ?? null;
@@ -628,7 +664,7 @@ export function GraphView({
   }
 
   function exportFilteredScene() {
-    const blob = new Blob([graphSceneToMermaid(scene)], {
+    const blob = new Blob([graphSceneToMermaid(scene, staticVisuals, { iconSlot: false }).source], {
       type: "text/plain;charset=utf-8",
     });
     const url = URL.createObjectURL(blob);
@@ -639,6 +675,44 @@ export function GraphView({
     URL.revokeObjectURL(url);
   }
 
+  // Stage status is built once. Over the canvas it floats; in List mode the
+  // list replaces the canvas, so the same status joins the list instead and
+  // never sits under (or over) the list's own controls.
+  const loadingView = busyAction ? <div className="graph-canvas-loading" role="status"><RefreshCw size={20} aria-hidden="true" />
+    {t("graph.view.loading", { view: busyAction.startsWith("mode:") ? t(`graph.view.${busyAction.slice(5)}.name`) : t(`graph.view.${payload.history.mode}.name`) })}</div> : null;
+  // History views hide relations with their own two chips; those count as filters here.
+  const hiddenByChoice = activeFilters.length > 0 || historical && (!historyVisibility.recorded || !historyVisibility.background);
+  const emptyView = <>
+    <p>{t(hiddenByChoice ? "graph.view.allHidden" : "graph.view.noRelations")}</p>
+    {hiddenByChoice ? <button className="inline-action" type="button" onClick={() => {
+      setFilters(facets); setHistoryVisibility((state) => ({ ...state, recorded: true, background: true }));
+    }}>{t("graph.filters.clearAll")}</button> : historical ? null : <small>{t("graph.view.addRelations")}</small>}
+  </>;
+  const coverageShown = !!coverageNotice && dismissedCoverageKey !== coverageKey;
+  const coverageView = coverageShown ? <div className="graph-canvas-coverage">
+    <LocalGraphCoverageInfo active={active} descriptions={omissionDescriptions}
+      heading={coverageNotice.heading} messages={coverageNotice.messages} payload={payload} workspaceId={workspaceId}
+      folderOnly={coverageNotice.folderOnly} tone={coverageNotice.tone}
+      budgetNote={hasDisplayQuota ? t("graph.omissions.appliedBudget", { nodes: payload.budget.applied.nodes, edges: payload.budget.applied.edges }) : undefined} />
+    <button type="button" aria-label={t("graph.view.dismissNotice")} onClick={() => setDismissedCoverageKey(coverageKey)}><X size={14} aria-hidden="true" /></button>
+  </div> : null;
+  // The floating notice stays operable above Details, so Details (panel or
+  // expanded sheet) starts below it: the stage publishes the notice's bottom
+  // edge. The stage is observed too: its width moves the notice (history, phone).
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    const notice = stage?.querySelector<HTMLElement>(":scope > .graph-canvas-coverage");
+    if (!stage || !notice || typeof ResizeObserver === "undefined") return undefined;
+    const update = () => stage.style.setProperty("--graph-stage-notice-bottom", `${notice.offsetTop + notice.offsetHeight + 8}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(notice);
+    observer.observe(stage);
+    return () => {
+      observer.disconnect();
+      stage.style.removeProperty("--graph-stage-notice-bottom");
+    };
+  }, [coverageShown, historical, listOpen]);
   return (
     <section
       aria-labelledby="graph-view-heading"
@@ -660,17 +734,28 @@ export function GraphView({
               aria-label={`${localRelationLabel(t, kind)} ${count}`} aria-pressed={enabled}
               className={`graph-local-relation-chip graph-local-relation-chip-${kind}`} key={kind}
               onClick={() => toggleRelationKinds(edgeKinds)} type="button">
-              <span aria-hidden="true" className="graph-local-relation-line" />{localRelationLabel(t, kind)}
+              <GraphEdgeCue className="graph-local-relation-line" color={nodeVisuals.tokens.edge[kind]} kind={kind} width={18} />
+              {localRelationLabel(t, kind)}
               <span className="graph-local-relation-count">{count}</span>
             </button>) : (["background", "recorded"] as const).map((kind) => <button key={kind} type="button"
               className={`graph-local-relation-chip graph-local-relation-chip-${kind === "recorded" ? "action" : "link"}`}
               aria-pressed={historyVisibility[kind]} title={kind === "background" ? t("graph.historyUi.baseline") : undefined}
               onClick={() => setHistoryVisibility((state) => ({ ...state, [kind]: !state[kind] }))}>
-              <span aria-hidden="true" className="graph-local-relation-line" />
+              <GraphEdgeCue className="graph-local-relation-line" kind={kind === "recorded" ? "action" : "link"} width={18}
+                color={nodeVisuals.tokens.edge[kind === "recorded" ? "action" : "link"]} />
               {t(kind === "recorded" ? "graph.historyUi.historyRelations" : "graph.historyUi.currentRelations")}
               {kind === "recorded" ? <GraphPreviewBadge /> : null}
               <span>{kind === "recorded" ? recordedEdgeIds.size : payload.edges.filter((edge) => !recordedEdgeIds.has(edge.id)).length}</span>
             </button>)}
+            {historical && referencedCount > 0 ? <button type="button" aria-pressed={historyVisibility.referenced}
+              className="graph-local-relation-chip graph-local-relation-chip-actionReference"
+              title={t("graph.historyUi.referencedHint")}
+              onClick={() => setHistoryVisibility((state) => ({ ...state, referenced: !state.referenced }))}>
+              <GraphEdgeCue className="graph-local-relation-line" kind="actionReference" width={18}
+                color={nodeVisuals.tokens.edge.actionReference} />
+              {t("graph.historyUi.referenced")}
+              <span>{referencedCount}</span>
+            </button> : null}
           </div>
       <details
         aria-label={t("graph.filters.heading", { defaultValue: "Graph filters" })}
@@ -690,6 +775,7 @@ export function GraphView({
           {historical ? <fieldset className="graph-filter-group"><legend>{t("graph.localToolbar.relationships")}</legend><div>
             <label><input type="checkbox" checked={historyVisibility.background} onChange={(e) => setHistoryVisibility((state) => ({ ...state, background: e.target.checked }))} />{t("graph.historyUi.currentRelations")}</label>
             <label><input type="checkbox" checked={historyVisibility.recorded} onChange={(e) => setHistoryVisibility((state) => ({ ...state, recorded: e.target.checked }))} />{t("graph.historyUi.historyRelations")} <GraphPreviewBadge /></label>
+            {referencedCount > 0 ? <label><input type="checkbox" checked={historyVisibility.referenced} onChange={(e) => setHistoryVisibility((state) => ({ ...state, referenced: e.target.checked }))} />{t("graph.historyUi.referenced")} ({referencedCount})</label> : null}
           </div></fieldset> : null}
           <div className="graph-filter-summary">
           <button
@@ -788,18 +874,15 @@ export function GraphView({
       </details>
 
         </div>
-      <div className={`graph-local-stage ${busyAction ? "is-loading" : ""}`} aria-busy={!!busyAction}>
-        {busyAction ? <div className="graph-canvas-loading" role="status"><RefreshCw size={20} aria-hidden="true" />
-          {t("graph.view.loading", { view: busyAction.startsWith("mode:") ? t(`graph.view.${busyAction.slice(5)}.name`) : t(`graph.view.${payload.history.mode}.name`) })}</div> : null}
-        {!busyAction && !historical && scene.edges.length === 0 ? <div className="graph-canvas-empty" role="status">
-          <p>{t(activeFilters.length ? "graph.view.allHidden" : "graph.view.noRelations")}</p>
-          {activeFilters.length ? <button className="inline-action" type="button" onClick={() => setFilters(facets)}>{t("graph.filters.clearAll")}</button> : <small>{t("graph.view.addRelations")}</small>}
-        </div> : null}
+      <div className={`graph-local-stage ${busyAction ? "is-loading" : ""} ${listOpen ? "is-list-view" : ""}`} aria-busy={!!busyAction} ref={stageRef}>
+        {!listOpen ? loadingView : null}
+        {!listOpen && !busyAction && !historical && scene.edges.length === 0 ? <div className="graph-canvas-empty" role="status">{emptyView}</div> : null}
         <div className="graph-canvas-context">
-          <span className="graph-seed-pill" title={payload.nodes.find((node) => node.is_seed)?.label}>
-            {t("graph.view.seed")} <strong>{payload.nodes.find((node) => node.is_seed)?.label}</strong>
+          {currentNode ? <button aria-label={t("graph.view.locateCurrent", { label: currentNode.label })} className="graph-seed-pill"
+            onClick={() => canvasRef.current?.locate(currentNode.id)} title={t("graph.view.locateCurrent", { label: currentNode.label })} type="button">
+            <GraphSeedCue color={tokens.node.context} />{t("graph.view.seed")} <strong>{currentNode.label}</strong>
             {payload.query.seeds.length > 1 ? <small>+{payload.query.seeds.length - 1}</small> : null}
-          </span>
+          </button> : null}
           {historical ? <span className="graph-time-pill"><Clock3 size={16} aria-hidden="true" />
             {t("graph.historyUi.recordedAt")} <strong>{currentEvent ? formatVersionTimestamp(currentEvent.occurred_at) : t("graph.timeline.start")}</strong>
             {Math.max(0, visibleCursor + 1)}/{timeline.length}</span> : null}
@@ -814,20 +897,21 @@ export function GraphView({
           <details className="graph-canvas-more"><summary aria-label={t("graph.view.more")} title={t("graph.view.more")}><MoreHorizontal size={17} aria-hidden="true" /></summary>
             <div>
               <button className="graph-mobile-fullscreen" type="button" onClick={() => void toggleFullscreen()}><Maximize2 size={16} aria-hidden="true" />{t(fullscreen ? "graph.view.exitFullscreen" : "graph.view.fullscreen")}</button>
-              <button type="button" onClick={resetView}><RotateCcw size={16} aria-hidden="true" />{t("graph.resetView")}</button>
+              {/* Camera, labels and future items only change the drawing: List mode leaves them out. */}
+              {!listOpen ? <button type="button" onClick={resetView}><RotateCcw size={16} aria-hidden="true" />{t("graph.resetView")}</button> : null}
               <button type="button" disabled={payload.capabilities?.export === false} onClick={exportFilteredScene}><Download size={16} aria-hidden="true" />{t("graph.export")}</button>
               {!fullscreen ? <button type="button" onClick={() => { setStaticOpen(true); requestAnimationFrame(() => graphRegionRef.current?.querySelector(".graph-static-fallback")?.scrollIntoView({ block: "nearest" })); }}>{t("graph.view.openStatic")}</button> : null}
-              <label><input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} />{t("graph.localToolbar.labels")}</label>
-              {historical ? <label><input type="checkbox" checked={showFuture} onChange={(e) => setShowFuture(e.target.checked)} />{t("graph.historyUi.showFuture")}</label> : null}
+              {!listOpen ? <label><input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} />{t("graph.localToolbar.labels")}</label> : null}
+              {historical && !listOpen ? <label><input type="checkbox" checked={showFuture} onChange={(e) => setShowFuture(e.target.checked)} />{t("graph.historyUi.showFuture")}</label> : null}
             </div>
           </details>
         </div>
-        {coverageNotice && dismissedCoverageKey !== coverageKey ? <div className="graph-canvas-coverage">
-          <LocalGraphCoverageInfo active={active} descriptions={omissionDescriptions}
-            heading={coverageNotice.heading} messages={coverageNotice.messages} payload={payload} workspaceId={workspaceId}
-            folderOnly={coverageNotice.folderOnly} tone={coverageNotice.tone}
-            budgetNote={hasDisplayQuota ? t("graph.omissions.appliedBudget", { nodes: payload.budget.applied.nodes, edges: payload.budget.applied.edges }) : undefined} />
-          <button type="button" aria-label={t("graph.view.dismissNotice")} onClick={() => setDismissedCoverageKey(coverageKey)}><X size={14} aria-hidden="true" /></button>
+        {!listOpen ? coverageView : null}
+        {listOpen ? <div className="graph-list-layer">
+          <LocalGraphListView active={active} analysis={sceneAnalysis} context={listContext} empty={emptyView}
+            memory={listMemoryRef} memoryKey={JSON.stringify([workspaceId, payload.query.seeds[0] ?? null])}
+            notice={loadingView || coverageView ? <>{loadingView}{coverageView}</> : null} onBlur={clearItemFocus}
+            onFocus={setFocusedId} onSelect={selectItem} scopeKey={canvasScopeKey} selectedId={effectiveSelectedId} />
         </div> : null}
         <GraphCameraControls disabled={rendererStatus !== "ready"} onZoomIn={() => canvasRef.current?.zoomIn()} onZoomOut={() => canvasRef.current?.zoomOut()} onFit={() => canvasRef.current?.fit()} />
         {canvasScene.nodes.length ? (
@@ -836,7 +920,8 @@ export function GraphView({
           viewportInsets={() => {
             const stage = graphRegionRef.current?.querySelector(".graph-local-stage")?.getBoundingClientRect();
             const detail = graphRegionRef.current?.querySelector(".graph-details:not([hidden])")?.getBoundingClientRect();
-            const sheet = !fullscreen && !!stage && !!detail && detail.width > stage.width * .75;
+            // Details is a bottom sheet in a narrow frame (fullscreen too), a side panel otherwise.
+            const sheet = !!stage && !!detail && detail.width > stage.width * .75;
             return { top: historical ? 90 : 60, left: 0,
               right: detail && !sheet ? detail.width + 24 : 0,
               bottom: detail && sheet ? detail.height + 12 : 0 };
@@ -874,8 +959,10 @@ export function GraphView({
           active={active}
           citationEvidenceActive={active && !historical && timelineCursor === null}
           citationEvidenceRevision={payload.projection_revision}
+          sessionActivityRevision={`${payload.projection_revision}:${payload.generated_at}`}
           historyEvents={historical ? timeline : undefined}
           historyEdges={historyCatalog.edges}
+          historyNodes={historical ? historyCatalog.nodes : undefined}
           historicalOnly={historical && !!selectedId && !scene.nodes.some((node) => node.id === selectedId) && !scene.edges.some((edge) => edge.id === selectedId)}
           currentEventId={currentEvent?.id}
           onSeekEvent={(id) => seekEvent(timeline.findIndex((event) => event.id === id))}
@@ -883,9 +970,8 @@ export function GraphView({
           edge={selectedEdge}
           node={selectedNode}
           nodes={scene.nodes}
-          navigation={sceneNavigation}
-          sceneEdges={scene.edges}
-          nodeVisuals={nodeVisuals}
+          analysis={sceneAnalysis}
+          listContext={listContext}
           onCenter={(id) => canvasRef.current?.centerOn(id)}
           onClearSelection={clearSelection}
           onBlur={clearItemFocus}
@@ -913,28 +999,18 @@ export function GraphView({
           <time dateTime={payload.generated_at}>{t("graph.view.fetched", { time: formatVersionTimestamp(payload.generated_at) })}</time>
           {coverageNotice ? <span className="graph-status-omitted">{t("graph.view.omitted")}</span> : null}
           <div className="graph-status-actions">
-            {!fullscreen ? <button type="button" aria-expanded={listOpen} onClick={() => setListOpen((open) => !open)}><List size={15} aria-hidden="true" />{t("graph.view.list")}</button> : null}
+            <span className="graph-view-switch" role="group" aria-label={t("graph.viewMode.group")}>
+              <button type="button" aria-pressed={!listOpen} onClick={() => setListOpen(false)}><Network size={15} aria-hidden="true" />{t("graph.viewMode.graph")}</button>
+              <button type="button" aria-pressed={listOpen} onClick={() => setListOpen(true)}><List size={15} aria-hidden="true" />{t("graph.viewMode.list")}</button>
+            </span>
             <button type="button" aria-expanded={legendOpen} onClick={() => setLegendOpen((open) => !open)}><Layers size={15} aria-hidden="true" />{t("graph.view.legend")}</button>
           </div>
         </footer>
-        <div hidden={!legendOpen}><GraphLegend nodeVisuals={nodeVisuals} scene={scene} /></div>
+        <div hidden={!legendOpen}><GraphLegend historical={historical} nodeVisuals={nodeVisuals} /></div>
       </div>
 
       <p className="visually-hidden" aria-live="polite" aria-atomic="true">{announcement}</p>
 
-      <div className="graph-parity-grid" hidden={!listOpen}>
-        <GraphRelationshipList
-          active={active}
-          edges={scene.edges}
-          nodes={scene.nodes}
-          nodeVisuals={nodeVisuals}
-          onBlur={clearItemFocus}
-          onFocus={setFocusedId}
-          onSelect={selectItem}
-          selectedId={effectiveSelectedId}
-          workspaceId={workspaceId}
-        />
-      </div>
 
       <details
         className="graph-static-fallback"
@@ -946,11 +1022,8 @@ export function GraphView({
             ? t("graph.staticFallbackFailed", { defaultValue: "Static graph fallback" })
             : t("graph.staticFallback", { defaultValue: "Static graph view" })}
         </summary>
-        {staticOpen ? mermaidSource !== null ? (
-          <MarkdownView
-            body={`\`\`\`mermaid\n${mermaidSource}\n\`\`\``}
-            wikilinkMode="plain"
-          />
+        {staticOpen ? staticDiagram !== null ? (
+          <MermaidDiagram decorateSvg={decorateStaticSvg} source={staticDiagram.source} />
         ) : (
           <>
             <p>{t("graph.staticFallbackList", {
@@ -1036,74 +1109,80 @@ function GraphFilterGroup({
   );
 }
 
-function GraphLegend({ nodeVisuals, scene }: { nodeVisuals: LocalNodeVisuals; scene: GraphScene }) {
+const LEGEND_NODE_KINDS = {
+  current: ["context", "agent", "library", "conversation", "folder"],
+  history: ["context", "version", "agent", "library", "conversation", "folder"],
+} as const satisfies Record<string, readonly GraphNodeVisualKind[]>;
+const LEGEND_TIMELINE_MARKS = ["version", "ask", "tool", "review", "activity", "added", "removed"] as const;
+// Current relations draw no activity verb; history draws each verb's stroke.
+const LEGEND_EDGE_KINDS = {
+  current: ["link", "citation", "coAccess", "membership", "action"],
+  history: LOCAL_EDGE_VISUAL_KIND_ORDER,
+} as const satisfies Record<string, readonly GraphEdgeVisualKind[]>;
+
+/**
+ * A fixed legend per mode: every glyph and line this mode can draw, in one
+ * order, whatever the current scene happens to contain. Each line style
+ * carries the relationship names it draws.
+ */
+function GraphLegend({ historical, nodeVisuals }: { historical: boolean; nodeVisuals: LocalNodeVisuals }) {
   const { t } = useTranslation("graph");
   const { tokens, forcedColors } = nodeVisuals;
-  const visibleNodeKinds = new Set(scene.nodes.map((node) => localNodeVisualKind(node.entity_kind, node.family)));
-  const nodeKinds = (["context", "library", "agent", "conversation", "folder"] as const)
-    .filter((kind) => visibleNodeKinds.has(kind));
-  const visibleEdgeKinds = new Set(scene.edges.map((edge) => localEdgeVisualKind(edge.edge_kind)));
-  const edgeVisualKinds = LOCAL_EDGE_VISUAL_KIND_ORDER.filter((kind) => visibleEdgeKinds.has(kind));
-  const edgeKinds = uniqueSceneValues(scene.edges.map((edge) => edge.edge_kind));
-  const actionKinds = uniqueSceneValues(
-    scene.edges.flatMap((edge) => edge.action_kind ? [edge.action_kind] : []),
-  );
+  const relationNames = (kind: GraphEdgeVisualKind) => {
+    if (kind === "action") return t(historical ? "graph.legend.edgeNote.actionOther" : "graph.legend.edgeNote.action");
+    if (isActionEdgeVisualKind(kind)) {
+      return localEdgeKindsFor(kind).map((actionKind) => graphLabel(t, "graphActionKind", actionKind)).join(" · ");
+    }
+    const names = [...new Set(localEdgeKindsFor(kind).map((edgeKind) => graphLabel(t, "graphEdgeKind", edgeKind)))]
+      .filter((name) => name !== t(`graph.legend.edge.${kind}`));
+    return names.join(" · ");
+  };
   return (
-    <div className="graph-legend">
+    <div className="graph-legend" data-legend-mode={historical ? "history" : "current"}>
       <h4 className="visually-hidden">{t("graph.legend.heading", { defaultValue: "Legend" })}</h4>
-      {scene.edges.some((edge) => localEdgeVisualKind(edge.edge_kind) === "action") ? (
-        <p className="graph-local-action-legend graph-local-relation-chip-action">
-          <span aria-hidden="true" className="graph-local-relation-line" />
-          {t("graph.legend.actionLines", {
-            defaultValue: "Long-dashed lines show action occurrences, not document links or citations.",
-          })}
-        </p>
-      ) : null}
       <div className="graph-legend-groups">
         <ul aria-label={t("graph.legend.nodes", { defaultValue: "Node types" })}>
-          {nodeKinds.map((kind) => (
+          <li data-node-visual-kind="seed">
+            <GraphSeedCue color={tokens.node.context} />
+            {t("graph.legend.node.seed")}
+          </li>
+          {LEGEND_NODE_KINDS[historical ? "history" : "current"].map((kind) => (
             <li data-node-visual-kind={kind} key={kind}>
-              <LocalNodeSwatch color={tokens.node[kind]} forcedColors={forcedColors} kind={kind} surface={tokens.surface} />
+              <GraphNodeCue className="graph-local-node-cue" color={tokens.node[GRAPH_NODE_VISUALS[kind].color]}
+                forcedColors={forcedColors} kind={kind} surface={tokens.surface} />
               {t(`graph.legend.node.${kind}`)}
             </li>
           ))}
-          {scene.nodes.some((node) => node.is_seed) ? (
-            <li data-node-visual-kind="seed">
-              <svg aria-hidden="true" height="16" viewBox="0 0 16 16" width="16">
-                <circle cx="8" cy="8" fill={tokens.node.context} r="5.5" stroke="currentColor" strokeWidth="2.64" />
-              </svg>
-              {t("graph.legend.node.seed")}
+        </ul>
+        <ul aria-label={t("graph.legend.edges", { defaultValue: "Relationship line styles" })} className="graph-legend-stack">
+          {LEGEND_EDGE_KINDS[historical ? "history" : "current"].map((kind) => {
+            const names = relationNames(kind);
+            const label = historical && kind === "action" ? "actionOther" : kind;
+            return (
+              <li data-edge-visual-kind={kind} key={kind}>
+                <GraphEdgeCue color={tokens.edge[kind]} kind={kind} />
+                <span>{t(`graph.legend.edge.${label}`)}{names ? <small>{names}</small> : null}</span>
+              </li>
+            );
+          })}
+          {historical ? (
+            <li data-edge-visual-kind="removed">
+              <GraphEdgeCue kind="removed" />
+              <span>{t("graph.legend.edge.removed")}</span>
             </li>
           ) : null}
         </ul>
-        <ul aria-label={t("graph.legend.edges", { defaultValue: "Relationship line styles" })}>
-          {edgeVisualKinds.map((kind) => (
-            <li data-edge-visual-kind={kind} key={kind}>
-              <svg aria-hidden="true" height="16" viewBox="0 0 34 16" width="34">
-                <line stroke={tokens.edge[kind]} strokeDasharray={GRAPH_EDGE_PATTERN[kind]?.join(" ")}
-                  strokeWidth={kind === "membership" ? 1.1 : kind === "action" ? 1.7 : 2} x1="1" x2="33" y1="8" y2="8" />
-              </svg>
-              {t(`graph.legend.edge.${kind}`)}
+        {historical ? (
+          <ul aria-label={t("graph.legend.history", { defaultValue: "History marks" })} className="graph-legend-stack">
+            <li data-legend-mark="event-target">
+              <GraphNodeCue className="graph-local-node-cue" color={tokens.node.library} forcedColors={forcedColors}
+                kind="library" ring={tokens.highlight} surface={tokens.surface} />
+              {t("graph.legend.eventTarget")}
             </li>
-          ))}
-        </ul>
-        {(edgeKinds.length || actionKinds.length) ? (
-          <ul aria-label={t("graph.legend.meanings", { defaultValue: "Relationship meanings" })}>
-            {edgeKinds.map((kind) => (
-              <li key={`kind:${kind}`}>
-                <span aria-hidden="true" className="graph-kind-cue">→</span>
-                {graphLabel(t, "graphEdgeKind", kind)}
-              </li>
-            ))}
-            {actionKinds.map((kind) => (
-              <li key={`action:${kind}`}>
-                <span
-                  aria-hidden="true"
-                  className={`graph-action-cue graph-action-cue-${graphActionFamily(kind)}`}
-                >
-                  {graphActionFamilyCue(kind)}
-                </span>
-                {graphLabel(t, "graphActionKind", kind)}
+            {LEGEND_TIMELINE_MARKS.map((kind) => (
+              <li data-legend-mark={`timeline-${kind}`} key={kind}>
+                <LocalTimelineMark kind={kind} />
+                {t(`graph.historyUi.kind.${kind}`)}
               </li>
             ))}
           </ul>
@@ -1113,94 +1192,25 @@ function GraphLegend({ nodeVisuals, scene }: { nodeVisuals: LocalNodeVisuals; sc
   );
 }
 
-function LocalNodeSwatch({ color, forcedColors, kind, surface }: {
-  color: string; forcedColors: boolean; kind: GraphNodeVisualKind; surface: string;
-}) {
-  return (
-    <svg aria-hidden="true" className="graph-local-node-cue" data-node-visual-kind={kind} height="16" viewBox="0 0 16 16" width="16">
-      {kind === "library" ? <rect fill={color} height="11" width="11" x="2.5" y="2.5" />
-        : kind === "agent" ? <polygon fill={color} points="8,1.4 13.5,8 8,14.6 2.5,8" />
-        : kind === "folder" ? <circle cx="8" cy="8" fill="none" r="5.5" stroke={color} strokeWidth="2.64" />
-        : <circle cx="8" cy="8" fill={color} r="5.5" />}
-      {kind === "conversation" && forcedColors ? (
-        <><circle cx="8" cy="8" fill={surface} r="4.4" /><circle cx="8" cy="8" fill={color} r="3.025" /></>
-      ) : null}
-    </svg>
-  );
-}
 
-function LocalNodeCue({ node, visuals }: { node: GraphNode; visuals: LocalNodeVisuals }) {
-  const kind = localNodeVisualKind(node.entity_kind, node.family);
-  return <LocalNodeSwatch color={visuals.tokens.node[kind]} forcedColors={visuals.forcedColors}
-    kind={kind} surface={visuals.tokens.surface} />;
-}
-
-function GraphRelationshipList({
-  active,
-  edges,
-  nodes,
-  nodeVisuals,
-  onBlur,
-  onFocus,
-  onSelect,
-  selectedId,
-  workspaceId,
-}: {
-  active: boolean;
-  edges: GraphEdge[];
-  nodes: GraphNode[];
-  nodeVisuals: LocalNodeVisuals;
-  onBlur: (id: string) => void;
-  onFocus: (id: string) => void;
-  onSelect: (id: string, origin: LocalGraphSelectionOrigin) => void;
-  selectedId: string | null;
-  workspaceId: string | null;
-}) {
-  const { t } = useTranslation("graph");
-  const nodeLabels = useMemo(() => new Map(nodes.map((node) => [node.id, node.label])), [nodes]);
-  const renderNode = useCallback((node: GraphNode) => <><LocalNodeCue node={node} visuals={nodeVisuals} />
-    <span><strong>{node.label}</strong><small>{graphLabel(t, "graphNodeFamily", node.family)}{node.status ? ` · ${graphLabel(t, "graphStatus", node.status)}` : ""}</small></span></>, [nodeVisuals, t]);
-  const renderEdge = useCallback((edge: GraphEdge) => <><span className={`graph-edge-swatch graph-edge-swatch-${edge.layer}`} aria-hidden="true" />
-    <span><strong>{edge.label}</strong><small>{nodeLabels.get(edge.source) ?? edge.source} → {nodeLabels.get(edge.target) ?? edge.target}</small></span></>, [nodeLabels]);
-  const scopeKey = workspaceId ?? "";
-  return (
-    <section className="graph-relationship-list" aria-labelledby="graph-relationship-list-heading">
-      <h4 id="graph-relationship-list-heading">{t("graph.relationshipList", { defaultValue: "Accessible graph contents" })}</h4>
-      <p>{t("graph.relationshipListDescription", { defaultValue: "Tab into each list once. Use arrow keys to highlight items, then Enter or Space to select and access their actions in Details." })}</p>
-      <LocalGraphList
-        active={active} defaultOpen empty={t("graph.emptyFiltered")} items={nodes}
-        label={t("graph.nodes", { defaultValue: "Nodes" })}
-        onBlur={onBlur} onFocus={onFocus} onSelect={onSelect}
-        renderItem={renderNode}
-        scopeKey={scopeKey} selectedId={selectedId}
-      />
-      <LocalGraphList
-        active={active} empty={t("graph.emptyFiltered")} items={edges}
-        label={t("graph.edges", { defaultValue: "Relationships" })}
-        onBlur={onBlur} onFocus={onFocus} onSelect={onSelect}
-        renderItem={renderEdge}
-        scopeKey={scopeKey} selectedId={selectedId}
-      />
-    </section>
-  );
-}
 
 function GraphDetails({
   active,
   historyEvents,
   historyEdges,
+  historyNodes,
   historicalOnly,
   currentEventId,
   onSeekEvent,
   citationEvidenceActive,
   citationEvidenceRevision,
+  sessionActivityRevision,
   busyAction,
   edge,
   node,
   nodes,
-  sceneEdges,
-  navigation,
-  nodeVisuals,
+  analysis,
+  listContext,
   onCenter,
   onClearSelection,
   onBlur,
@@ -1218,18 +1228,19 @@ function GraphDetails({
   active: boolean;
   historyEvents?: GraphTimelineEvent[];
   historyEdges: GraphEdge[];
+  historyNodes?: GraphNode[];
   historicalOnly: boolean;
   currentEventId?: string;
   onSeekEvent: (id: string) => void;
   citationEvidenceActive: boolean;
   citationEvidenceRevision: number;
+  sessionActivityRevision: string;
   busyAction: string | null;
   edge: GraphEdge | null;
   node: GraphNode | null;
   nodes: GraphNode[];
-  sceneEdges: GraphEdge[];
-  navigation: SceneNavigation;
-  nodeVisuals: LocalNodeVisuals;
+  analysis: LocalSceneAnalysis;
+  listContext: LocalViewContext;
   onCenter: (id: string) => void;
   onClearSelection: () => void;
   onBlur: (id: string) => void;
@@ -1246,6 +1257,9 @@ function GraphDetails({
 }) {
   const { t } = useTranslation("graph");
   const detailsRef = useRef<HTMLElement>(null);
+  // A timeline step or refresh can drop the focused row from Details: focus
+  // the same item if it is still here, else the panel itself.
+  useFocusRecovery(detailsRef, () => detailsRef.current, node?.id ?? edge?.id ?? null);
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const actionReasonId = useId();
   useLayoutEffect(() => {
@@ -1270,16 +1284,10 @@ function GraphDetails({
   }
   const evidence = node?.evidence ?? edge?.evidence;
   const href = node ? nodeHref(node, workspaceId) : null;
-  const nodeLabels = new Map(nodes.map((entry) => [entry.id, entry.label]));
-  const edgeSentence = edge ? t("graph.details.edgeSentence", {
-    action: edge.action_kind
-      ? graphLabel(t, "graphActionKind", edge.action_kind)
-      : graphLabel(t, "graphEdgeKind", edge.edge_kind),
-    defaultValue: "{{source}} —{{action}}→ {{target}}",
-    source: nodeLabels.get(edge.source) ?? edge.source,
-    target: nodeLabels.get(edge.target) ?? edge.target,
-  }) : null;
   const coAccess = edge ? coAccessSentence(edge, t) : null;
+  const sessionEdge = edge && isSessionNode(nodes.find((item) => item.id === edge.source))
+    ? sessionRelationSummary(edge, t, (value) => formatVersionTimestamp(value)) : null;
+  const detailEdges = [...new Map([...analysis.edges, ...historyEdges].map((entry) => [entry.id, entry])).values()];
   const citationSource = edge && ["citation_page", "citation_source", "citation_agent"].includes(edge.edge_kind)
     ? nodes.find((item) => item.id === edge.source && item.entity_kind === "context_page") : undefined;
   const citationTarget = citationSource && edge ? nodes.find((item) => item.id === edge.target) : undefined;
@@ -1296,18 +1304,19 @@ function GraphDetails({
         <button aria-label={clearLabel} className="graph-details-close" onClick={onClearSelection} type="button"><X size={17} aria-hidden="true" /></button>
       </div>
       <button className="graph-details-sheet-toggle" type="button" aria-expanded={sheetExpanded} onClick={() => setSheetExpanded((value) => !value)}>{t(sheetExpanded ? "graph.details.collapseSheet" : "graph.details.expandSheet")}</button>
-      <h5 className="graph-details-title">{node?.label ?? edge?.label}</h5>
+      <h5 className="graph-details-title">{node?.label ?? (edge ? localEdgeKindLabel(edge, t) : null)}</h5>
       {historicalOnly ? <p className="graph-history-inactive">{t("graph.historyUi.notPresent")}</p> : null}
-      {node ? <p className="graph-details-location">{graphLabel(t, "graphEntityKind", node.entity_kind)}{node.path ? ` · ${node.path}` : ""}</p> : null}
+      {node ? <LocalNodeMeta context={listContext} node={node} /> : null}
       {nodeActions?.reason ? <p className="graph-action-reason" id={actionReasonId}>{nodeActions.reason}</p> : null}
-      {edgeSentence ? <p className="graph-edge-summary">{edgeSentence}</p> : null}
+      {edge ? <LocalRelationEnds analysis={analysis} catalog={historyNodes} context={listContext} edge={edge} onSelect={onSelect} /> : null}
       {coAccess ? <p className="graph-edge-summary">{coAccess}</p> : null}
-      {node && !node.is_seed ? <div className="graph-seed-relationships"><h5>{t("graph.details.seedRelationships")}</h5>
-        {sceneEdges.filter((entry) => (entry.source === node.id || entry.target === node.id) && querySeeds.some((seed) => {
-          const other = nodes.find((item) => item.id === (entry.source === node.id ? entry.target : entry.source));
-          return other?.entity_kind === seed.kind && other.entity_id === seed.id;
-        })).map((entry) => <p key={entry.id}><span aria-hidden="true">{entry.direction === "undirected" ? "↔" : entry.source === node.id ? "→" : "←"}</span> {entry.label}</p>)}
-      </div> : null}
+      {sessionEdge ? <p className="graph-edge-summary">{sessionEdge}</p> : null}
+      {node && hasSessionDetails(node) ? <SessionActivityDetails active={active} edges={detailEdges} href={href}
+        node={node} nodes={nodes} revision={sessionActivityRevision} workspaceId={workspaceId} /> : null}
+      {node?.records?.length ? <GraphNodeRecords records={node.records} /> : null}
+      {/* Expanded documents are seeds too; their path from the current document
+          is how a reader reaches the relations between them outside the canvas. */}
+      {node ? <LocalSeedPath analysis={analysis} context={listContext} node={node} onSelect={onSelect} /> : null}
       {historyEvents ? <div className="graph-item-history">
         <h5>{t("graph.historyUi.itemRecords")} <GraphPreviewBadge /></h5>
         <ul>{historyEvents.filter((event) => eventInvolves(event, node?.id ?? edge?.id ?? null, historyEdges)).map((event) => <li key={event.id}>
@@ -1318,53 +1327,14 @@ function GraphDetails({
         {!historyEvents.some((event) => eventInvolves(event, node?.id ?? edge?.id ?? null, historyEdges)) ? <p>{t("graph.historyUi.noItemRecords")}</p> : null}
       </div> : null}
       <dl>
-        {node ? <><GraphDetail label={t("graph.details.type", { defaultValue: "Type" })} value={graphLabel(t, "graphNodeFamily", node.family)} /><GraphDetail label={t("graph.details.kind", { defaultValue: "Kind" })} value={graphLabel(t, "graphEntityKind", node.entity_kind)} />{node.status ? <GraphDetail label={t("graph.details.status", { defaultValue: "Status" })} value={graphLabel(t, "graphStatus", node.status)} /> : null}{node.actor_label ? <GraphDetail label={t("graph.details.actor", { defaultValue: "Actor" })} value={node.actor_label} /> : null}</> : null}
+        {node ? <>{node.review_status ? <GraphDetail label={t("graph.details.review")} value={versionOutcome(node, t)} /> : null}{node.actor_label ? <GraphDetail label={t("graph.details.actor", { defaultValue: "Actor" })} value={node.actor_label} /> : null}</> : null}
         {edge ? <><GraphDetail label={t("graph.details.layer", { defaultValue: "Layer" })} value={graphLabel(t, "graphLayer", edge.layer)} /><GraphDetail label={t("graph.details.relationship", { defaultValue: "Relationship" })} value={graphLabel(t, "graphEdgeKind", edge.edge_kind)} />{edge.action_kind ? <GraphDetail label={t("graph.details.action", { defaultValue: "Action" })} value={graphLabel(t, "graphActionKind", edge.action_kind)} /> : null}<GraphDetail label={t("graph.details.direction", { defaultValue: "Direction" })} value={graphLabel(t, "graphDirection", edge.direction)} /><GraphDetail label={t("graph.details.provenance", { defaultValue: "Provenance" })} value={graphLabel(t, "graphProvenance", edge.provenance)} />{edge.aggregate && !coAccess ? <GraphDetail label={t("graph.details.aggregate", { defaultValue: "Aggregate" })} value={String(edge.count ?? edge.weight)} /> : null}</> : null}
         {(node?.occurred_at || edge?.occurred_at) ? <GraphDetail label={t("graph.details.time", { defaultValue: "Time" })} value={formatVersionTimestamp((node?.occurred_at ?? edge?.occurred_at)!, "long")} /> : null}
         {evidence ? <><GraphDetail label={t("graph.details.evidence", { defaultValue: "Evidence" })} value={evidence.label ?? graphLabel(t, "graphEvidenceKind", evidence.kind)} /><GraphDetail label={t("graph.details.evidenceRef", { defaultValue: "Evidence reference" })} value={evidence.available ? evidence.ref ?? evidence.id ?? t("graph.details.available", { defaultValue: "Available" }) : t("graph.details.unavailable", { defaultValue: "Unavailable" })} /></> : null}
       </dl>
       {workspaceId && citationPair ? <CitationEvidenceSection active={citationEvidenceActive} pair={citationPair} revision={citationEvidenceRevision} workspaceId={workspaceId} /> : null}
-      {node ? <>
-        <GraphSceneNodeList
-          active={active}
-          heading={t("graph.sceneNavigation.neighbors", { defaultValue: "Direct neighbors in this scene" })}
-          empty={t("graph.sceneNavigation.noNeighbors", { defaultValue: "No direct neighbors are connected in this scene." })}
-          nodes={navigation.neighborsByNode.get(node.id) ?? []}
-          nodeVisuals={nodeVisuals}
-          onBlur={onBlur}
-          onFocus={onFocus}
-          onSelect={onSelect}
-          open
-          selectedId={node.id}
-          showKeyboardHint
-          scopeKey={`${workspaceId ?? ""}:${node.id}`}
-        />
-        {navigation.membersByFolder.has(node.id) ? <GraphSceneNodeList
-          active={active}
-          heading={t("graph.sceneNavigation.members", { defaultValue: "Members in this scene" })}
-          empty={t("graph.sceneNavigation.noMembers", { defaultValue: "No members are connected in this scene." })}
-          nodes={navigation.membersByFolder.get(node.id)!}
-          nodeVisuals={nodeVisuals}
-          onBlur={onBlur}
-          onFocus={onFocus}
-          onSelect={onSelect}
-          open
-          selectedId={node.id}
-          scopeKey={`${workspaceId ?? ""}:${node.id}`}
-        /> : null}
-        {navigation.foldersByMember.has(node.id) ? <GraphSceneNodeList
-          active={active}
-          heading={t("graph.sceneNavigation.folders", { defaultValue: "Folders in this scene" })}
-          empty={t("graph.sceneNavigation.noFolders", { defaultValue: "No folders are connected in this scene." })}
-          nodes={navigation.foldersByMember.get(node.id)!}
-          nodeVisuals={nodeVisuals}
-          onBlur={onBlur}
-          onFocus={onFocus}
-          onSelect={onSelect}
-          selectedId={node.id}
-          scopeKey={`${workspaceId ?? ""}:${node.id}`}
-        /> : null}
-      </> : null}
+      {node ? <LocalRelationFlow active={active} analysis={analysis} context={listContext} key={node.id} node={node}
+        onBlur={onBlur} onFocus={onFocus} onSelect={onSelect} scopeKey={`${workspaceId ?? ""}:${node.id}`} /> : null}
       <div className="graph-details-footer">
         {href ? <Link className="graph-details-open" to={href}>{t("graph.open")}</Link> : null}
         {node && nodeActions ? <GraphSelectedNodeActions actions={{ ...nodeActions, href: null }} node={node} onCollapse={onCollapse} onExpand={onExpand} reasonId={actionReasonId} /> : null}
@@ -1383,48 +1353,6 @@ function GraphDetails({
   );
 }
 
-function GraphSceneNodeList({
-  active,
-  heading,
-  empty,
-  nodes,
-  nodeVisuals,
-  onBlur,
-  onFocus,
-  onSelect,
-  open = false,
-  selectedId,
-  scopeKey,
-  showKeyboardHint = false,
-}: {
-  active: boolean;
-  heading: string;
-  empty: string;
-  nodes: GraphNode[];
-  nodeVisuals: LocalNodeVisuals;
-  onBlur: (id: string) => void;
-  onFocus: (id: string) => void;
-  onSelect: (id: string, origin: LocalGraphSelectionOrigin) => void;
-  open?: boolean;
-  selectedId: string | null;
-  scopeKey: string;
-  showKeyboardHint?: boolean;
-}) {
-  const { t } = useTranslation("graph");
-  return <LocalGraphList
-    active={active}
-    className="graph-scene-navigation"
-    defaultOpen={open}
-    description={showKeyboardHint ? t("graph.sceneNavigation.keyboardHint", {
-      defaultValue: "Tab into this list once. Use Up/Down or Home/End to highlight items. Press Enter or Space to select and focus Details.",
-    }) : undefined}
-    empty={empty} items={nodes} label={heading}
-    onBlur={onBlur} onFocus={onFocus} onSelect={onSelect}
-    renderItem={(node) => <><LocalNodeCue node={node} visuals={nodeVisuals} />
-      <span><strong>{node.label}</strong><small>{graphLabel(t, "graphNodeFamily", node.family)}</small></span></>}
-    scopeKey={scopeKey} selectedId={selectedId}
-  />;
-}
 
 type SelectedNodeActions = {
   action: "expand" | "collapse";
@@ -1490,6 +1418,28 @@ function GraphSelectedNodeActions({ actions, node, onCollapse, onExpand, reasonI
   );
 }
 
+/** The change and audit rows folded into a version: one line per action. */
+function GraphNodeRecords({ records }: { records: NonNullable<GraphNode["records"]> }) {
+  const { t } = useTranslation("graph");
+  const byAction = new Map<string, { count: number; last: string }>();
+  for (const record of records) {
+    const entry = byAction.get(record.action_kind);
+    byAction.set(record.action_kind, {
+      count: (entry?.count ?? 0) + 1,
+      last: entry && entry.last > record.occurred_at ? entry.last : record.occurred_at,
+    });
+  }
+  return (
+    <div className="graph-node-records">
+      <h5>{t("graph.details.records")}</h5>
+      <ul>{[...byAction.entries()].map(([action, { count, last }]) => <li key={action}>
+        {graphLabel(t, "graphActionKind", action)} {count > 1 ? `×${count}` : ""}
+        <time dateTime={last}>{formatVersionTimestamp(last)}</time>
+      </li>)}</ul>
+    </div>
+  );
+}
+
 function GraphDetail({ label, value }: { label: string; value: string }) {
   return <><dt>{label}</dt><dd>{value}</dd></>;
 }
@@ -1537,6 +1487,51 @@ function uniqueSceneValues(values: string[]) {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 
+type HistoryTopology = { sessions: Set<string>; sessionOnly: Set<string>; recordedEdgeIds: Set<string> };
+
+/** Classify dependencies before filters can remove their session or relation. */
+function buildHistoryTopology(payload: GraphQueryPayload): HistoryTopology {
+  const events = payload.timeline ?? [];
+  const allNodes = [...payload.nodes, ...events.flatMap(timelineNodeSnapshots)];
+  const allEdges = [...payload.edges, ...events.flatMap(timelineEdgeSnapshots)];
+  const sessions = new Set(allNodes.filter((node) => isSessionNode(node) || isSessionGroupNode(node)).map((node) => node.id));
+  const nonSessionRelation = new Set(allEdges.filter((edge) => !sessions.has(edge.source))
+    .flatMap((edge) => [edge.source, edge.target]));
+  const sessionOnly = new Set(allEdges.filter((edge) => sessions.has(edge.source))
+    .map((edge) => edge.target).filter((id) => !nonSessionRelation.has(id)));
+  const recordedEdgeIds = new Set([
+    ...events.flatMap((event) => [...(event.edge_ids ?? []), ...timelineEdgeSnapshots(event).map((edge) => edge.id)]),
+    ...payload.edges.filter((edge) => isActionEdgeVisualKind(localEdgeVisualKind(edge.edge_kind))).map((edge) => edge.id),
+  ]);
+  return { sessions, sessionOnly, recordedEdgeIds };
+}
+
+/**
+ * A conversation hangs off the seed it used. When filters hide every path
+ * from a seed to a conversation, the conversation goes, and so do the
+ * documents that are in the scene only because it used them. Other nodes
+ * keep the history view's rule: a node stays while its relations are hidden
+ * or not yet recorded.
+ */
+function withoutDetachedSessions(nodes: GraphNode[], edges: GraphEdge[], { sessions, sessionOnly }: HistoryTopology): GraphScene {
+  if (!sessions.size) return { nodes, edges };
+  const reached = new Set(nodes.filter((node) => node.is_seed).map((node) => node.id));
+  const neighbours = new Map<string, string[]>();
+  for (const edge of edges) {
+    neighbours.set(edge.source, [...(neighbours.get(edge.source) ?? []), edge.target]);
+    neighbours.set(edge.target, [...(neighbours.get(edge.target) ?? []), edge.source]);
+  }
+  const pending = [...reached];
+  while (pending.length) {
+    for (const next of neighbours.get(pending.pop()!) ?? []) {
+      if (!reached.has(next)) { reached.add(next); pending.push(next); }
+    }
+  }
+  const kept = nodes.filter((node) => reached.has(node.id) || !(sessions.has(node.id) || sessionOnly.has(node.id)));
+  const keptIds = new Set(kept.map((node) => node.id));
+  return { nodes: kept, edges: edges.filter((edge) => keptIds.has(edge.source) && keptIds.has(edge.target)) };
+}
+
 function localizedGraphScene(scene: GraphScene, t: TFunction): GraphScene {
   return {
     nodes: scene.nodes,
@@ -1573,10 +1568,10 @@ function localizedGraphTimeline(
     for (const node of timelineNodeSnapshots(event)) nodes.set(node.id, node);
     for (const edge of timelineEdgeSnapshots(event)) edges.set(edge.id, edge);
   }
+  // Each frame once: event i changes the view when frame i differs from i-1.
+  const frames = [-1, ...events.keys()].map((cursor) => applyVisibility(deriveGraphScene(payload, filters, cursor)));
   return events.map((event, index) => {
-    const before = applyVisibility(deriveGraphScene(payload, filters, index - 1));
-    const after = applyVisibility(deriveGraphScene(payload, filters, index));
-    const visibleChange = graphSceneSignature(before) !== graphSceneSignature(after);
+    const visibleChange = !sameGraphScene(frames[index], frames[index + 1]);
     const action = graphLabel(t, "graphActionKind", event.action_kind);
     const edge = [
       ...timelineEdgeSnapshots(event),
@@ -1615,11 +1610,14 @@ function localizedGraphTimeline(
   });
 }
 
-function graphSceneSignature(scene: GraphScene) {
-  return JSON.stringify({
-    edges: scene.edges.map((edge) => edge),
-    nodes: scene.nodes.map((node) => node),
-  });
+/**
+ * Same order and same content. Frames share their unchanged node and edge
+ * objects, so identity settles almost every pair and JSON only the rest.
+ */
+function sameGraphScene(left: GraphScene, right: GraphScene) {
+  const same = <T,>(a: readonly T[], b: readonly T[]) => a.length === b.length
+    && a.every((item, index) => item === b[index] || JSON.stringify(item) === JSON.stringify(b[index]));
+  return same(left.nodes, right.nodes) && same(left.edges, right.edges);
 }
 
 function timelineNodeSnapshots(event: GraphTimelineEvent) {
@@ -1653,20 +1651,13 @@ function localRelationLabel(t: TFunction, kind: GraphEdgeVisualKind) {
     citation: t("graph.localToolbar.citation", { defaultValue: "Citations" }),
     coAccess: t("graph.localToolbar.coAccess", { defaultValue: "Read together" }),
     membership: t("graph.localToolbar.membership", { defaultValue: "Membership" }),
+    actionWrite: t("graph.legend.edge.actionWrite"),
+    actionCite: t("graph.legend.edge.actionCite"),
+    actionRead: t("graph.legend.edge.actionRead"),
+    actionReference: t("graph.legend.edge.actionReference"),
     action: t("graph.localToolbar.action", { defaultValue: "Actions" }),
   };
   return labels[kind];
-}
-
-function graphActionFamilyCue(actionKind: string) {
-  const cues = {
-    authoring: "✎",
-    governance: "✓",
-    retrieval: "◇",
-    tool: "⚙",
-    other: "A",
-  } as const;
-  return cues[graphActionFamily(actionKind)];
 }
 
 function graphLabelGroupForFilter(key: keyof GraphFilters): GraphLabelGroup {
@@ -1813,7 +1804,12 @@ function useLocalGraphTokens(regionRef: { current: HTMLElement | null }, forcedC
   useLayoutEffect(() => {
     const region = regionRef.current;
     if (!region) return undefined;
-    const update = () => setTokens(readLocalGraphTokens(region, forcedColors));
+    // Ancestor class/style changes (a dialog opening) re-read the tokens;
+    // unchanged values keep their identity, so nothing downstream redraws.
+    const update = () => {
+      const next = readLocalGraphTokens(region, forcedColors);
+      setTokens((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
+    };
     update();
     if (typeof MutationObserver === "undefined") return undefined;
     // One observer per GraphView, not per row. Ancestors supply inherited

@@ -10,6 +10,12 @@
   0.1.3 input constraints and publication-time backfill, and only this one
   compares the frozen initialization DDL with the real release upgrades.
 
+The first traversal also upgrades, downgrades and re-upgrades the consolidated
+0.2.3 revision once, checking the Labs policy's defaults, values and NULL
+constraint and both archived Inbox indexes without adding a collected case.
+Fresh startup applies that revision after the frozen release initializer;
+the frozen snapshots remain unchanged.
+
 Scalar validation matrices belong to existing policy tests rather than this
 release migration.
 """
@@ -30,12 +36,14 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
 from backend.app.bootstrap import (
+    current_alembic_head,
     ensure_app_version_synced,
     resolve_alembic_ini,
     resolve_migrations_dir,
 )
 from backend.app.settings import Settings
 from backend.models import Base
+from backend.services.ops.alembic_migration_graph import initialization_script_directory
 from backend.services.ops.input_maintenance import audit_inputs
 from backend.services.page_service import PageService
 from backend.tests.integration.test_release_schema_migration import (
@@ -48,6 +56,7 @@ from backend.tests.integration.test_release_schema_migration import (
 # Published 0.1.4. The 0.2.1 package used a development-only parent instead.
 PARENT = "eb86fdacb1bb"
 REVISION = "5b7e5c149279"
+RELEASE_023_REVISION = "00ba02774c4a"
 
 
 def _migration_engine(tmp_path, dialect, filename):
@@ -261,8 +270,23 @@ def test_release_02_upgrade_downgrade_reupgrade(tmp_path, dialect):
         if dialect == "sqlite":
             _assert_each_table_rebuilt_at_most_once(statements)
         _assert_release_upgrade(engine, release_data, now, first=True)
+        _assert_labs_policy_upgrade(engine, config, workspace_id)
+        _assert_archived_inbox_indexes(engine)
         _assert_model_parity(engine)
         _seed_runtime_links(engine, release_data)
+        command.downgrade(config, REVISION)
+        assert "labs_policy" not in {
+            column["name"] for column in inspect(engine).get_columns("workspace")
+        }
+        _assert_archived_inbox_indexes(engine, present=False)
+        with engine.connect() as connection:
+            workspaces = _table(connection, "workspace")
+            assert connection.execute(
+                sa.select(
+                    workspaces.c.workspace_graph_enabled,
+                    workspaces.c.usage_relation_signals_enabled,
+                ).where(workspaces.c.id == workspace_id)
+            ).one() == (True, False)
         assert retained_account_state() == retained
         assert audit_inputs(database_url) == []
 
@@ -283,8 +307,12 @@ def test_release_02_upgrade_downgrade_reupgrade(tmp_path, dialect):
             ensure_app_version_synced(Settings(database_url=database_url))
         if dialect == "sqlite":
             _assert_each_table_rebuilt_at_most_once(statements)
-        assert _stamp(engine) == REVISION
+        assert _stamp(engine) == current_alembic_head()
         _assert_release_upgrade(engine, release_data, now, first=False)
+        _assert_labs_policy_upgrade(
+            engine, config, workspace_id, upgrade=False, raw_default=True
+        )
+        _assert_archived_inbox_indexes(engine)
         assert retained_account_state() == retained
         assert audit_inputs(database_url) == []
     finally:
@@ -306,6 +334,120 @@ def test_release_02_upgrade_downgrade_reupgrade(tmp_path, dialect):
                     connection.execute(sa.text("DROP TABLE IF EXISTS alembic_version"))
         finally:
             engine.dispose()
+
+
+def _assert_labs_policy_upgrade(
+    engine, config, workspace_id, *, upgrade=True, raw_default=False
+):
+    """Apply 0.2.3 once and inspect its Labs policy on the retained workspace."""
+
+    revision = RELEASE_023_REVISION
+    with engine.begin() as connection:
+        workspaces = _table(connection, "workspace")
+        connection.execute(
+            workspaces.update()
+            .where(workspaces.c.id == workspace_id)
+            .values(workspace_graph_enabled=True, usage_relation_signals_enabled=False)
+        )
+        original = dict(
+            connection.execute(
+                sa.select(workspaces).where(workspaces.c.id == workspace_id)
+            )
+            .mappings()
+            .one()
+        )
+
+    if upgrade:
+        assert "labs_policy" not in original
+        command.upgrade(config, revision)
+    else:
+        # Startup already performed the one re-upgrade in this traversal.
+        assert original.pop("labs_policy") == {}
+        revision = current_alembic_head()
+        assert _stamp(engine) == revision
+    columns = {
+        column["name"]: column for column in inspect(engine).get_columns("workspace")
+    }
+    with engine.begin() as connection:
+        workspaces = _table(connection, "workspace")
+        current = dict(
+            connection.execute(
+                sa.select(workspaces).where(workspaces.c.id == workspace_id)
+            )
+            .mappings()
+            .one()
+        )
+        assert {key: current[key] for key in original} == original
+        assert (
+            connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
+            == revision
+        )
+        assert not columns["labs_policy"]["nullable"]
+        assert columns["labs_policy"]["default"] is not None
+        assert current["labs_policy"] == {}
+        connection.execute(
+            workspaces.update()
+            .where(workspaces.c.id == workspace_id)
+            .values(labs_policy={"ask_enabled": True, "agent_enabled": True})
+        )
+        assert connection.scalar(
+            sa.select(workspaces.c.labs_policy).where(workspaces.c.id == workspace_id)
+        ) == {"ask_enabled": True, "agent_enabled": True}
+        # pg8000 maps NOT NULL violations to ProgrammingError; verify the
+        # database constraint code instead of the driver's exception subclass.
+        with pytest.raises(DBAPIError) as rejected, connection.begin_nested():
+            connection.execute(
+                workspaces.update()
+                .where(workspaces.c.id == workspace_id)
+                .values(labs_policy=sa.null())
+            )
+        if engine.dialect.name == "postgresql":
+            error = rejected.value.orig.args[0]
+            assert error["C"] == "23502"
+            assert error["c"] == "labs_policy"
+        else:
+            assert rejected.value.orig.sqlite_errorname == "SQLITE_CONSTRAINT_NOTNULL"
+
+    # A new raw SQL insert must also default off without consulting ORM defaults.
+    if not raw_default:
+        return
+    with engine.begin() as connection:
+        workspaces = _table(connection, "workspace")
+        inserted_id = uuid4()
+        connection.execute(
+            workspaces.insert(),
+            {**original, "id": inserted_id, "slug": "labs-default-workspace"},
+        )
+        assert (
+            connection.scalar(
+                sa.select(workspaces.c.labs_policy).where(
+                    workspaces.c.id == inserted_id
+                )
+            )
+            == {}
+        )
+        # Leave the retained-account snapshot unchanged after the raw-default probe.
+        connection.execute(workspaces.delete().where(workspaces.c.id == inserted_id))
+
+
+def _assert_archived_inbox_indexes(engine, *, present=True):
+    """Inspect the indexes applied with Labs by the same 0.2.3 revision."""
+
+    if present:
+        assert _stamp(engine) == RELEASE_023_REVISION
+    inspector = inspect(engine)
+    for table, owner in (
+        ("workspace_inbox_entry", ["workspace_id", "user_id"]),
+        ("account_inbox_entry", ["user_id"]),
+    ):
+        indexes = {index["name"]: index for index in inspector.get_indexes(table)}
+        index = indexes.get(f"ix_{table}_archived")
+        if not present:
+            assert index is None
+            continue
+        assert index["column_names"] == [*owner, "updated_at", "kind", "item_key"]
+        where = index["dialect_options"][f"{engine.dialect.name}_where"]
+        assert "archived_revision IS NOT NULL" in str(where)
 
 
 RELEASE_TABLES = {
@@ -716,13 +858,20 @@ def _assert_atomic_release_failures(config, engine, tmp_path, *, direction):
 
     A successful migration cannot prove transaction rollback. This adds exactly
     one upgrade and one downgrade failure input per dialect, not extra database
-    scenarios; the retry executes the real migration after each rollback.
+    scenarios; the retry executes the real migration after each rollback. The
+    upgrade fails after all 0.2.3 DDL, covering both release steps in the same
+    transaction; the downgrade still checks the published 0.2.1 boundary.
     """
     scripts = tmp_path / f"failed-{direction}"
     shutil.copytree(
         resolve_migrations_dir(), scripts, ignore=shutil.ignore_patterns("__pycache__")
     )
-    revision = scripts / "versions/v0_2/5b7e5c149279_release_0_2.py"
+    filename = (
+        "00ba02774c4a_release_0_2_3.py"
+        if direction == "upgrade"
+        else "5b7e5c149279_release_0_2.py"
+    )
+    revision = scripts / "versions/v0_2" / filename
     revision.write_text(
         revision.read_text()
         + (
@@ -744,7 +893,7 @@ def _assert_atomic_release_failures(config, engine, tmp_path, *, direction):
         }
     with pytest.raises(RuntimeError, match="late release DDL failure"):
         if direction == "upgrade":
-            command.upgrade(broken, REVISION)
+            command.upgrade(broken, RELEASE_023_REVISION)
         else:
             command.downgrade(broken, PARENT)
     assert _schema_snapshot(engine) == before
@@ -841,9 +990,9 @@ def test_older_releases_upgrade_directly_at_startup(tmp_path, dialect):
         with _captured_statements() as statements:
             ensure_app_version_synced(settings)
         migrated = True
-        # A fresh install records only the final revision. Historical replay
-        # would insert a baseline stamp and update it repeatedly, rebuilding
-        # SQLite tables along the way.
+        # A fresh install records the frozen release baseline, then each
+        # appended revision once. Historical replay would add earlier stamps
+        # and rebuild SQLite tables along the way.
         stamp_writes = [
             statement
             for statement in statements
@@ -851,8 +1000,15 @@ def test_older_releases_upgrade_directly_at_startup(tmp_path, dialect):
                 ("INSERT INTO alembic_version", "UPDATE alembic_version")
             )
         ]
-        assert len(stamp_writes) == 1
+        initialization = list(initialization_script_directory().walk_revisions())
+        assert len(stamp_writes) == len(initialization)
         assert stamp_writes[0].lstrip().startswith("INSERT INTO alembic_version")
+        assert REVISION in stamp_writes[0]
+        assert all(
+            statement.lstrip().startswith("UPDATE alembic_version")
+            for statement in stamp_writes[1:]
+        )
+        assert current_alembic_head() in stamp_writes[-1]
         assert not any("_alembic_tmp_" in statement for statement in statements)
         initialized_schema = _schema_snapshot(engine)
         command.downgrade(config, "efcbcf724889")
@@ -987,7 +1143,7 @@ def test_older_releases_upgrade_directly_at_startup(tmp_path, dialect):
                     connection.scalar(
                         sa.text("SELECT version_num FROM alembic_version")
                     )
-                    == REVISION
+                    == current_alembic_head()
                 )
                 assert (
                     connection.scalar(

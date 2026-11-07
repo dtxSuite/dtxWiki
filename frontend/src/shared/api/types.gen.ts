@@ -5110,9 +5110,9 @@ export interface components {
             /**
              * Publication State
              * @default editing
-             * @constant
+             * @enum {string}
              */
-            publication_state: "editing";
+            publication_state: "editing" | "draft";
             /**
              * Receipt Id
              * Format: uuid
@@ -5620,13 +5620,7 @@ export interface components {
         };
         /**
          * ContextPageCreateRequest
-         * @description Canonical ``POST context/pages`` body (P8.1/P9.1).
-         *
-         *     Deliberately has no ``slug``/``as_draft`` field: the canonical create
-         *     command always runs ``create_page_first`` (new page + empty editing),
-         *     regardless of whether a title/body is supplied. It never branches into
-         *     ``write_page``'s upsert-by-slug behavior -- that ambiguity is exactly what
-         *     P8.1 retired this route to get away from.
+         * @description REST creation can explicitly save a shared draft in a browser session.
          */
         ContextPageCreateRequest: {
             /** Aliases */
@@ -5641,6 +5635,12 @@ export interface components {
             page_type?: ("overview" | "source" | "entity" | "concept" | "synthesis" | "comparison" | "decision" | "contradiction" | "query" | "guide") | null;
             /** Placement Parent Node Id */
             placement_parent_node_id?: string | null;
+            /**
+             * Share Draft
+             * @description Browser-session creation: save a shared, unpublished draft.
+             * @default false
+             */
+            share_draft: boolean;
             /** Tags */
             tags?: string[] | null;
             /**
@@ -5677,6 +5677,12 @@ export interface components {
             backlink_count: number;
             /** Body Md */
             body_md: string;
+            /**
+             * Can Submit For Review
+             * @description Whether the caller may submit this exact version for review now: its own private edit or unreviewed shared browser draft.
+             * @default false
+             */
+            can_submit_for_review: boolean;
             /** Change Set Id */
             change_set_id?: string | null;
             /**
@@ -6687,6 +6693,16 @@ export interface components {
             data: components["schemas"]["FeedbackEntry"][];
             envelope?: components["schemas"]["RESTResultEnvelope"];
         };
+        /**
+         * GraphActionCount
+         * @description How often one action happened within an aggregate relation.
+         */
+        GraphActionCount: {
+            /** Action Kind */
+            action_kind: string;
+            /** Count */
+            count: number;
+        };
         /** GraphBudget */
         GraphBudget: {
             /**
@@ -6838,6 +6854,8 @@ export interface components {
         };
         /** GraphEdge */
         GraphEdge: {
+            /** Action Counts */
+            action_counts?: components["schemas"]["GraphActionCount"][];
             /** Action Kind */
             action_kind?: string | null;
             /**
@@ -7006,6 +7024,9 @@ export interface components {
         GraphNode: {
             /** Actor Label */
             actor_label?: string | null;
+            /** Aggregate Count */
+            aggregate_count?: number | null;
+            chat_presentation?: components["schemas"]["McpChatPresentationDescriptor"] | null;
             /**
              * Entity Id
              * Format: uuid
@@ -7032,8 +7053,33 @@ export interface components {
             occurred_at?: string | null;
             /** Path */
             path?: string | null;
+            /** Records */
+            records?: components["schemas"]["GraphNodeRecord"][];
+            /** Review Status */
+            review_status?: string | null;
             /** Status */
             status?: string | null;
+        };
+        /**
+         * GraphNodeRecord
+         * @description One lifecycle fact folded into the node it names.
+         *
+         *     Activity history draws one edit as one version node. The change and audit
+         *     rows that name that version ride on it here instead of becoming nodes.
+         */
+        GraphNodeRecord: {
+            /** Action Kind */
+            action_kind: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /**
+             * Source Kind
+             * @enum {string}
+             */
+            source_kind: "change_operation" | "audit_event";
         };
         /** GraphOmission */
         GraphOmission: {
@@ -8226,6 +8272,11 @@ export interface components {
             };
             /** Message Key */
             message_key?: string | null;
+            /**
+             * Related Targets
+             * @description Other entities the finding is about (for example, the second page of a pair), each titled at read time. A finding whose related page the actor cannot read is not returned at all.
+             */
+            related_targets?: components["schemas"]["LintRelatedTarget"][];
             /** Resolved At */
             resolved_at?: string | null;
             /** Rule Id */
@@ -8267,6 +8318,21 @@ export interface components {
         LintFormatResponse: {
             data: components["schemas"]["LintFormatData"];
             envelope?: components["schemas"]["RESTResultEnvelope"];
+        };
+        /**
+         * LintRelatedTarget
+         * @description Another entity a finding is about, readable by the requesting actor.
+         */
+        LintRelatedTarget: {
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+            /** Target Type */
+            target_type: string;
+            /** Title */
+            title?: string | null;
         };
         /** LintRuleInfo */
         LintRuleInfo: {
@@ -8918,6 +8984,31 @@ export interface components {
             /** Right Op Index */
             right_op_index: number;
         };
+        /**
+         * McpChatPresentationDescriptor
+         * @description Read-time facts from which a localized chat label can be composed.
+         *
+         *     The backend ranks locale-neutral evidence only. ``subject`` is never built
+         *     by parsing result-summary prose or by inferring an external user's prompt.
+         */
+        McpChatPresentationDescriptor: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "search" | "read" | "create" | "edit" | "cite" | "guide" | "other";
+            /** Primary Tool Name */
+            primary_tool_name: string | null;
+            /** Subject */
+            subject: string | null;
+            /** Subject Kind */
+            subject_kind: string | null;
+            /**
+             * Title Source
+             * @enum {string}
+             */
+            title_source: "user" | "artifact" | "query" | "input_text" | "target_kind" | "tool" | "generic";
+        };
         /** McpChatPreviewPurgeResponse */
         McpChatPreviewPurgeResponse: {
             data: components["schemas"]["McpChatPreviewPurgeResult"];
@@ -9486,14 +9577,10 @@ export interface components {
         };
         /**
          * PageAutosaveRequest
-         * @description P8.1: `expected_editing_revision` is a required CAS input here, not
-         *     optional -- unlike `PATCH /{page_id}` (`PageUpdateRequest`, which targets
-         *     the page's own shared head and has no per-author "editing" row of its
-         *     own), autosave always targets a specific actor's private "editing" row,
-         *     where `content_hash` alone cannot catch a stale write that only changes
-         *     title/tags/aliases/metadata (see `PageUpdateRequest.expected_editing_revision`'s
-         *     comment for why the hash-only check is insufficient). Inherits
-         *     `PageUpdateRequest`'s tag/alias length validators unchanged.
+         * @description Save an actor's edit with revision CAS, including metadata changes.
+         *
+         *     Browser saves explicitly stage a shared draft with ``share_draft``;
+         *     private editing clients retain their existing default behavior.
          */
         PageAutosaveRequest: {
             /** Aliases */
@@ -9534,6 +9621,12 @@ export interface components {
             retry_only: boolean;
             /** Session Version Id */
             session_version_id?: string | null;
+            /**
+             * Share Draft
+             * @description Browser-session save: stage a shared, unpublished draft.
+             * @default false
+             */
+            share_draft: boolean;
             /** Tags */
             tags?: string[] | null;
             /**
@@ -10136,7 +10229,7 @@ export interface components {
             expected_content_hash: string;
             /**
              * Expected References Hash
-             * @description Required when publishing a mutable editing version; frozen submitted versions already bind their references.
+             * @description Required when a browser publishes an editing or draft version.
              */
             expected_references_hash?: string | null;
             /**
@@ -11444,6 +11537,7 @@ export interface components {
             citation: components["schemas"]["PolicyCard"];
             context_write: components["schemas"]["PolicyCard"];
             graph: components["schemas"]["PolicyCard"];
+            labs?: components["schemas"]["PolicyCard"] | null;
             library: components["schemas"]["PolicyCard"];
             lint: components["schemas"]["PolicyCard"];
             /** Mcp Clients */
@@ -11470,7 +11564,7 @@ export interface components {
              * Group
              * @enum {string}
              */
-            group: "workspace" | "attachments" | "library" | "citation" | "context_write" | "agent_injection" | "review" | "lint" | "graph";
+            group: "workspace" | "attachments" | "library" | "citation" | "context_write" | "agent_injection" | "review" | "lint" | "graph" | "labs";
         };
         /** SettingsPolicyUpdateRequest */
         SettingsPolicyUpdateRequest: {
@@ -11478,7 +11572,7 @@ export interface components {
              * Group
              * @enum {string}
              */
-            group: "workspace" | "library" | "citation" | "context_write" | "agent_injection" | "review" | "lint" | "graph";
+            group: "workspace" | "library" | "citation" | "context_write" | "agent_injection" | "review" | "lint" | "graph" | "labs";
             /** Key */
             key: string;
             /** Value */
@@ -12755,7 +12849,7 @@ export interface components {
              * Reason
              * @enum {string}
              */
-            reason: "enabled" | "disabled_by_workspace" | "service_unavailable";
+            reason: "enabled" | "disabled_by_workspace" | "service_unavailable" | "permission_denied";
             /** Service Available */
             service_available: boolean;
             /** Workspace Enabled */

@@ -1,16 +1,24 @@
-import { Activity, ArrowUpRight, Check, ChevronLeft, ChevronRight, Clock3, Diamond, Info, MessageSquare, Minus, Pause, Play, Plus, SkipForward, Terminal } from "lucide-react";
+import { Activity, ArrowUpRight, Check, ChevronLeft, ChevronRight, Clock3, Info, MessageSquare, Minus, Pause, Play, Plus, SkipForward, Terminal, Triangle } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { GraphQueryPayload, GraphTimelineEvent } from "../../../shared/api/graph";
 import { formatVersionTimestamp } from "../../../shared/lib/datetime";
 import { eventInvolves, GraphPreviewBadge, type LocalTimelineEvent } from "./LocalGraphChrome";
 import type { TimelineMarkKind } from "./timelinePresentation";
+import { sessionActivityDigest } from "../sessionActivity";
 import "./LocalGraphTimeline.css";
 
-const icons = { version: Diamond, review: Check, ask: MessageSquare, tool: Terminal, added: Plus, removed: Minus, activity: Activity };
+// A version mark is the canvas version glyph (a filled triangle); every
+// activity mark shares the chat/activity colour and differs by icon.
+const icons = { version: Triangle, review: Check, ask: MessageSquare, tool: Terminal, added: Plus, removed: Minus, activity: Activity };
 function MarkIcon({ kind }: { kind: TimelineMarkKind }) {
   const Icon = icons[kind];
   return <Icon size={14} strokeWidth={2.5} aria-hidden="true" />;
+}
+
+/** One timeline mark glyph, shared with the history legend. */
+export function LocalTimelineMark({ kind }: { kind: TimelineMarkKind }) {
+  return <span aria-hidden="true" className={`local-history-symbol is-${kind}`}><MarkIcon kind={kind} /></span>;
 }
 
 export function LocalGraphTimeline({ cursor, onCursorChange, onPause, onPlay, onSpeedChange, onStep,
@@ -63,6 +71,7 @@ export function LocalGraphTimeline({ cursor, onCursorChange, onPause, onPlay, on
     const closest = timeline.reduce((best, item, index) => Math.abs(Date.parse(item.occurred_at) - at) < Math.abs(Date.parse(timeline[best].occurred_at) - at) ? index : best, 0);
     onCursorChange(closest);
   };
+  const digest = payload.history.mode === "action" ? sessionActivityDigest(payload, t) : null;
   const shortDate = (at: number) => new Intl.DateTimeFormat(undefined, { month: "2-digit", day: "2-digit" }).format(at);
   return <section className="local-history" aria-labelledby="graph-timeline-heading" data-testid="graph-timeline">
     <header className="local-history-header">
@@ -71,6 +80,7 @@ export function LocalGraphTimeline({ cursor, onCursorChange, onPause, onPlay, on
         <p>{payload.history.coverage_from ? formatVersionTimestamp(payload.history.coverage_from).split(" ")[0] : t("graph.timeline.unknown")}
           {" – "}{payload.history.watermark ? formatVersionTimestamp(payload.history.watermark).split(" ")[0] : t("graph.timeline.now")}
           <span aria-hidden="true"> · </span>{t("graph.historyUi.records", { count: timeline.length })}</p>
+        {digest ? <p className="local-history-digest" data-testid="graph-session-digest">{digest}</p> : null}
       </div>
       <div className="local-history-controls" role="group" aria-label={t("graph.timeline.heading")}>
         <div className="local-history-transport">
