@@ -10,6 +10,7 @@ import { LOCAL_EDGE_VISUAL_KIND_ORDER, localEdgeKindsFor, localEdgeVisualKind } 
 import { decorateStaticDiagramSvg, graphSceneToMermaid, type StaticDiagramVisuals } from "./local/staticDiagram";
 import { GraphCameraControls, GraphPreviewBadge, GraphScopeSelector, GraphTypeSelector, eventInvolves } from "./local/LocalGraphChrome";
 import { LocalGraphTimeline, LocalTimelineMark } from "./local/LocalGraphTimeline";
+import { readCanvasRatio, storeCanvasRatio, type GraphCanvasRatio } from "./local/canvasRatio";
 import { timelinePresentation } from "./local/timelinePresentation";
 import { historySceneCatalog, renderHistoryScene } from "./local/historyScene";
 import { LocalGraphCoverageInfo } from "./local/LocalGraphCoverageInfo";
@@ -22,6 +23,7 @@ import type { LocalNodeVisuals } from "./local/LocalNodeCue";
 import { localEdgeKindLabel, type LocalViewContext } from "./local/localRelationViews";
 import type { RovingSelectionOrigin as LocalGraphSelectionOrigin } from "./shared/relationList/useRovingList";
 import { localSceneScopeKey } from "./local/sceneScope";
+import { localSceneAdmits } from "./local/sceneInput";
 import { GraphEdgeCue, GraphNodeCue, GraphSeedCue } from "./shared/GraphCues";
 import { GRAPH_NODE_VISUALS, isActionEdgeVisualKind, readGraphTokens, type GraphEdgeVisualKind, type GraphNodeVisualKind } from "./shared/graphTokens";
 import { hasSessionDetails, SessionActivityDetails } from "./shared/SessionActivityDetails";
@@ -39,6 +41,7 @@ import type {
   GraphTimelineEvent,
 } from "../../shared/api/graph";
 import { StatusBanner } from "../../shared/components/StatusBanner";
+import { Spinner } from "../../shared/components/Spinner";
 import { formatVersionTimestamp } from "../../shared/lib/datetime";
 import { domainLabel } from "../../shared/lib/domainLabel";
 import { searchResultHref } from "../../shared/lib/searchResultHref";
@@ -50,11 +53,14 @@ import {
 import {
   coAccessSentence,
   deriveGraphScene,
+  filterGraphScene,
   graphFacets,
   sortedTimeline,
   type GraphFilters,
   type GraphScene,
 } from "./graphModel";
+
+type LocalPinState = "unpinned" | "waiting" | "pinning" | "pinned";
 
 type GraphViewProps = {
   active: boolean;
@@ -64,7 +70,7 @@ type GraphViewProps = {
   onExpand: (node: GraphNode) => Promise<void>;
   onHistoryModeChange: (mode: GraphHistoryMode) => Promise<void>;
   payload: GraphQueryPayload;
-  staticPayload?: GraphQueryPayload;
+  staticPayload: GraphQueryPayload;
   workspaceGraphHref?: (node: GraphNode) => string | null;
   // Canonical Context permalinks are workspace-in-path; without the id the
   // list falls back to the query-param form (see searchResultHref).
@@ -83,7 +89,7 @@ export function GraphView({
   onExpand,
   onHistoryModeChange,
   payload: wirePayload,
-  staticPayload: wireStaticPayload = wirePayload,
+  staticPayload: wireStaticPayload,
   workspaceGraphHref,
   workspaceId = null,
 }: GraphViewProps) {
@@ -105,6 +111,8 @@ export function GraphView({
   const actionGenerationRef = useRef(0);
   const frameRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [detailsBelow, setDetailsBelow] = useState(false);
+  const [canvasRatio, setCanvasRatio] = useState<GraphCanvasRatio>(readCanvasRatio);
   const [showFuture, setShowFuture] = useState(false);
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
   const [dismissedCoverageKey, setDismissedCoverageKey] = useState<string | null>(null);
@@ -166,15 +174,13 @@ export function GraphView({
     : payload.query.depth === 2 ? "extended" : "neighbors";
   const depthBusy = Boolean(busyAction?.startsWith("depth:") || busyAction?.startsWith("mode:"));
   const historyTopology = useMemo(() => buildHistoryTopology(payload), [payload]);
-  const staticHistoryTopology = useMemo(() => staticPayload === payload ? historyTopology : buildHistoryTopology(staticPayload),
-    [historyTopology, payload, staticPayload]);
   const { recordedEdgeIds } = historyTopology;
   const referencedCount = useMemo(() => payload.edges.filter((edge) => edge.action_kind === "referenced").length, [payload]);
-  const applyHistoryVisibility = useCallback((value: GraphScene, topology = historyTopology): GraphScene => {
+  const applyHistoryVisibility = useCallback((value: GraphScene): GraphScene => {
     if (!historical) return value;
     const edges = value.edges.filter((edge) => (edge.action_kind !== "referenced" || historyVisibility.referenced)
-      && (topology.recordedEdgeIds.has(edge.id) ? historyVisibility.recorded : historyVisibility.background));
-    return withoutDetachedSessions(value.nodes, edges, topology);
+      && (historyTopology.recordedEdgeIds.has(edge.id) ? historyVisibility.recorded : historyVisibility.background));
+    return withoutDetachedSessions(value.nodes, edges, historyTopology);
   }, [historical, historyTopology, historyVisibility]);
   const timeline = useMemo(
     () => localizedGraphTimeline(payload, filters, t, applyHistoryVisibility),
@@ -233,13 +239,12 @@ export function GraphView({
         withCoAccessLabels(eventFrame, t), event, showFuture, payload.history.mode === "action", hoveredIndex >= 0, event?.summary)
         : withCoAccessLabels(scene, t)),
       scopeKey: canvasScopeKey,
-      freezeLayout: historical,
       currentId: currentNode?.id ?? null,
     };
   }, [applyHistoryVisibility, canvasScopeKey, currentNode, filters, historical, historyCatalog, hoveredEventId, payload, scene, showFuture, t, timeline, visibleCursor]);
-  const staticScene = useMemo(() => localizedGraphScene(applyHistoryVisibility(
-    deriveGraphScene(staticPayload, filters, timelineCursor), staticHistoryTopology), t),
-  [applyHistoryVisibility, filters, staticHistoryTopology, staticPayload, t, timelineCursor]);
+  // Static relationships stay current even while the canvas replays history.
+  const staticScene = useMemo(() => localizedGraphScene(
+    filterGraphScene(staticPayload, filters), t), [filters, staticPayload, t]);
   const staticDiagram = useMemo(
     () => staticOpen && staticScene.edges.length <= STATIC_DIAGRAM_EDGE_LIMIT
       ? graphSceneToMermaid(staticScene, staticVisuals, { iconSlot: true })
@@ -254,6 +259,21 @@ export function GraphView({
     ?? (historical ? historyCatalog.nodes.find((node) => node.id === selectedId) : null) ?? null;
   const selectedEdge = scene.edges.find((edge) => edge.id === selectedId)
     ?? (historical ? historyCatalog.edges.find((edge) => edge.id === selectedId) : null) ?? null;
+  // A pin without a coordinate is not fixed yet: the canvas reports one once
+  // the point has entered the timeline frame and settled there.
+  const canvasMemberIds = useMemo(() => new Set(canvasScene.nodes.filter(localSceneAdmits).map((node) => node.id)),
+    [canvasScene]);
+  const pinStateOf = (id: string): LocalPinState => !pinnedIds.includes(id) ? "unpinned"
+    : pinnedPositions[id] ? "pinned"
+      : canvasMemberIds.has(id) && rendererStatus !== "error" ? "pinning" : "waiting";
+  const unresolvedPinsRef = useRef<string[]>([]);
+  useEffect(() => {
+    const resolved = unresolvedPinsRef.current.filter((id) => pinnedIds.includes(id) && pinnedPositions[id]);
+    unresolvedPinsRef.current = pinnedIds.filter((id) => !pinnedPositions[id]);
+    const labels = resolved.flatMap((id) => canvasScene.nodes.find((node) => node.id === id)?.label ?? []);
+    // One message for every pin fixed in the same frame.
+    if (labels.length) setAnnouncement(t("graph.details.pinnedAnnouncement", { labels: labels.join(", ") }));
+  }, [canvasScene, pinnedIds, pinnedPositions, t]);
   const effectiveSelectedId = selectedNode || selectedEdge ? selectedId : null;
   const effectiveFocusedId = focusedId && (
     scene.nodes.some((node) => node.id === focusedId)
@@ -340,26 +360,34 @@ export function GraphView({
         event.preventDefault(); void document.exitFullscreen(); return;
       }
       const target = event.target instanceof Element ? event.target.closest("details[open]") : null;
-      if (target && target.matches(".graph-type-comparison,.graph-frame-filters,.graph-canvas-more,.graph-details-more,.graph-local-coverage-info")) {
+      if (target && target.matches(".graph-type-comparison,.graph-frame-filters,.graph-canvas-more,.graph-height-picker,.graph-details-more,.graph-local-coverage-info")) {
         target.removeAttribute("open"); target.querySelector("summary")?.focus();
         event.preventDefault(); event.stopPropagation(); return;
       }
       if (!effectiveSelectedId && !effectiveFocusedId) return;
       event.preventDefault();
       event.stopPropagation();
+      const closedId = effectiveSelectedId;
       setSelectedId(null);
       setFocusedId(null);
-      requestAnimationFrame(() => region.focus());
+      requestAnimationFrame(() => {
+        if (closedId && detailsBelow && listOpen) {
+          region.focus({ preventScroll: true });
+          returnToListRow(region, closedId);
+        } else {
+          region.focus();
+        }
+      });
     };
     region.addEventListener("keydown", handleEscape);
     return () => region.removeEventListener("keydown", handleEscape);
-  }, [effectiveFocusedId, effectiveSelectedId]);
+  }, [detailsBelow, effectiveFocusedId, effectiveSelectedId, listOpen]);
 
   useEffect(() => {
     const closeOutside = (event: PointerEvent) => {
       if (!(event.target instanceof Node)) return;
       for (const details of Array.from(graphRegionRef.current?.querySelectorAll<HTMLDetailsElement>(
-        ".graph-type-comparison[open],.graph-frame-filters[open],.graph-canvas-more[open],.graph-details-more[open]",
+        ".graph-type-comparison[open],.graph-frame-filters[open],.graph-canvas-more[open],.graph-height-picker[open],.graph-details-more[open]",
       ) ?? [])) if (!details.contains(event.target)) details.open = false;
     };
     document.addEventListener("pointerdown", closeOutside);
@@ -441,6 +469,20 @@ export function GraphView({
   const hasDisplayQuota = payload.omissions?.some(
     (omission) => omission.reason === "node_quota" || omission.reason === "relation_quota",
   );
+  // The static surface describes current relationships, without timeline coverage.
+  const staticCoverageNotice = graphCoverageNotice({
+    truncated: staticPayload.truncated,
+    completeness: staticPayload.completeness,
+    omissions: staticPayload.omissions,
+    warnings: (staticPayload.warnings ?? []).filter((code) => code !== "history_coverage_partial"
+      && code !== "graph_timeline_catalog_bounded"),
+  }, t);
+  const staticOmissionDescriptions = [...new Set(
+    (staticPayload.omissions ?? []).map((omission) => graphOmissionDescription(omission, t)),
+  )];
+  const staticHasDisplayQuota = staticPayload.omissions?.some(
+    (omission) => omission.reason === "node_quota" || omission.reason === "relation_quota",
+  );
   const activeFilters = [
     ...excludedFilters("nodeFamilies", facets.nodeFamilies, filters.nodeFamilies),
     ...excludedFilters("layers", facets.layers, filters.layers),
@@ -512,10 +554,13 @@ export function GraphView({
   }, []);
 
   function clearSelection() {
+    const closedId = effectiveSelectedId;
+    const region = graphRegionRef.current;
     selectionOriginRef.current = null;
     setSelectedId(null);
     setFocusedId(null);
-    graphRegionRef.current?.focus({ preventScroll: true });
+    region?.focus({ preventScroll: true });
+    if (closedId && detailsBelow && listOpen) requestAnimationFrame(() => returnToListRow(region, closedId));
   }
 
   function selectCanvasItem(id: string | null) {
@@ -646,13 +691,10 @@ export function GraphView({
       canvasRef.current?.pin(node.id, false);
       return;
     }
-    // A keyboard pin asks the adapter to retain the current position; a
-    // pointer drag reports and stores its exact position.
+    // The canvas reports the coordinate it keeps through onPin, as for a
+    // drag: at once for a drawn point, after arrival for one outside the frame.
     setPinnedIds((current) => [...current, node.id]);
-    const position = canvasRef.current?.pin(node.id, true);
-    if (position) {
-      setPinnedPositions((current) => ({ ...current, [node.id]: position }));
-    }
+    canvasRef.current?.pin(node.id, true);
   }
 
   function resetView() {
@@ -713,6 +755,54 @@ export function GraphView({
       stage.style.removeProperty("--graph-stage-notice-bottom");
     };
   }, [coverageShown, historical, listOpen]);
+  // A narrow page frame shows Details after the canvas and timeline: a phone
+  // canvas is too short to carry it. Same 760px reader boundary as the sheet CSS.
+  useLayoutEffect(() => {
+    const region = graphRegionRef.current;
+    if (!region || typeof ResizeObserver === "undefined") return undefined;
+    const update = () => {
+      const { width } = region.getBoundingClientRect();
+      setDetailsBelow(!fullscreen && width > 0 && width <= 760);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(region);
+    return () => observer.disconnect();
+  }, [fullscreen]);
+  const detailsView = (
+    <GraphDetails
+      active={active}
+      below={detailsBelow}
+      citationEvidenceActive={active && !historical && timelineCursor === null}
+      citationEvidenceRevision={payload.projection_revision}
+      sessionActivityRevision={`${payload.projection_revision}:${payload.generated_at}`}
+      historyEvents={historical ? timeline : undefined}
+      historyEdges={historyCatalog.edges}
+      historyNodes={historical ? historyCatalog.nodes : undefined}
+      historicalOnly={historical && !!selectedId && !scene.nodes.some((node) => node.id === selectedId) && !scene.edges.some((edge) => edge.id === selectedId)}
+      currentEventId={currentEvent?.id}
+      onSeekEvent={(id) => seekEvent(timeline.findIndex((event) => event.id === id))}
+      busyAction={busyAction}
+      edge={selectedEdge}
+      node={selectedNode}
+      nodes={scene.nodes}
+      analysis={sceneAnalysis}
+      listContext={listContext}
+      onCenter={(id) => canvasRef.current?.centerOn(id)}
+      onClearSelection={clearSelection}
+      onBlur={clearItemFocus}
+      onCollapse={(node) => runAction(`collapse:${node.id}`, () => onCollapse(node))}
+      onExpand={(node) => runAction(`expand:${node.id}`, () => onExpand(node))}
+      onFocus={setFocusedId}
+      onSelect={selectItem}
+      onTogglePin={togglePin}
+      pinState={selectedNode ? pinStateOf(selectedNode.id) : "unpinned"}
+      querySeeds={payload.query.seeds}
+      supportsExpand={payload.capabilities?.expand !== false}
+      workspaceGraphHref={workspaceGraphHref}
+      workspaceId={workspaceId}
+    />
+  );
   return (
     <section
       aria-labelledby="graph-view-heading"
@@ -874,7 +964,7 @@ export function GraphView({
       </details>
 
         </div>
-      <div className={`graph-local-stage ${busyAction ? "is-loading" : ""} ${listOpen ? "is-list-view" : ""}`} aria-busy={!!busyAction} ref={stageRef}>
+      <div className={`graph-local-stage ${busyAction ? "is-loading" : ""} ${listOpen ? "is-list-view" : ""}`} data-height-ratio={canvasRatio} aria-busy={!!busyAction} ref={stageRef}>
         {!listOpen ? loadingView : null}
         {!listOpen && !busyAction && !historical && scene.edges.length === 0 ? <div className="graph-canvas-empty" role="status">{emptyView}</div> : null}
         <div className="graph-canvas-context">
@@ -913,14 +1003,16 @@ export function GraphView({
             notice={loadingView || coverageView ? <>{loadingView}{coverageView}</> : null} onBlur={clearItemFocus}
             onFocus={setFocusedId} onSelect={selectItem} scopeKey={canvasScopeKey} selectedId={effectiveSelectedId} />
         </div> : null}
-        <GraphCameraControls disabled={rendererStatus !== "ready"} onZoomIn={() => canvasRef.current?.zoomIn()} onZoomOut={() => canvasRef.current?.zoomOut()} onFit={() => canvasRef.current?.fit()} />
+        <GraphCameraControls disabled={rendererStatus !== "ready"} onZoomIn={() => canvasRef.current?.zoomIn()} onZoomOut={() => canvasRef.current?.zoomOut()} onFit={() => canvasRef.current?.fit()}
+          canvasRatio={canvasRatio} heightDisabled={fullscreen} onHeightChange={(ratio) => { setCanvasRatio(ratio); storeCanvasRatio(ratio); }} />
         {canvasScene.nodes.length ? (
           <GraphCanvas
           ref={canvasRef}
           viewportInsets={() => {
             const stage = graphRegionRef.current?.querySelector(".graph-local-stage")?.getBoundingClientRect();
-            const detail = graphRegionRef.current?.querySelector(".graph-details:not([hidden])")?.getBoundingClientRect();
-            // Details is a bottom sheet in a narrow frame (fullscreen too), a side panel otherwise.
+            // Below the canvas Details covers none of it. Otherwise it is a bottom
+            // sheet in a narrow fullscreen frame and a side panel in a wide one.
+            const detail = detailsBelow ? undefined : graphRegionRef.current?.querySelector(".graph-details:not([hidden])")?.getBoundingClientRect();
             const sheet = !!stage && !!detail && detail.width > stage.width * .75;
             return { top: historical ? 90 : 60, left: 0,
               right: detail && !sheet ? detail.width + 24 : 0,
@@ -955,37 +1047,7 @@ export function GraphView({
             })}
           </p>
         )}
-        <GraphDetails
-          active={active}
-          citationEvidenceActive={active && !historical && timelineCursor === null}
-          citationEvidenceRevision={payload.projection_revision}
-          sessionActivityRevision={`${payload.projection_revision}:${payload.generated_at}`}
-          historyEvents={historical ? timeline : undefined}
-          historyEdges={historyCatalog.edges}
-          historyNodes={historical ? historyCatalog.nodes : undefined}
-          historicalOnly={historical && !!selectedId && !scene.nodes.some((node) => node.id === selectedId) && !scene.edges.some((edge) => edge.id === selectedId)}
-          currentEventId={currentEvent?.id}
-          onSeekEvent={(id) => seekEvent(timeline.findIndex((event) => event.id === id))}
-          busyAction={busyAction}
-          edge={selectedEdge}
-          node={selectedNode}
-          nodes={scene.nodes}
-          analysis={sceneAnalysis}
-          listContext={listContext}
-          onCenter={(id) => canvasRef.current?.centerOn(id)}
-          onClearSelection={clearSelection}
-          onBlur={clearItemFocus}
-          onCollapse={(node) => runAction(`collapse:${node.id}`, () => onCollapse(node))}
-          onExpand={(node) => runAction(`expand:${node.id}`, () => onExpand(node))}
-          onFocus={setFocusedId}
-          onSelect={selectItem}
-          onTogglePin={togglePin}
-          pinnedIds={pinnedIds}
-          querySeeds={payload.query.seeds}
-          supportsExpand={payload.capabilities?.expand !== false}
-          workspaceGraphHref={workspaceGraphHref}
-          workspaceId={workspaceId}
-        />
+        {detailsBelow ? null : detailsView}
       </div>
 
         {historical ? <LocalGraphTimeline cursor={visibleCursor} onCursorChange={seekEvent} restoredLatest={!!storedEvent && storedIndex < 0}
@@ -993,6 +1055,7 @@ export function GraphView({
           onSpeedChange={setPlaybackSpeed} onStep={stepTimeline} onShowEvent={showEventInGraph}
           payload={payload} playing={playing} reducedMotion={reducedMotion} selectedId={selectedId}
           speed={playbackSpeed} timeline={timeline} /> : null}
+        {detailsBelow ? detailsView : null}
         <footer className="graph-frame-status">
           <strong>{t(`graph.range.${range}.name`)} · {t(payload.history.mode === "action" ? "graph.range.actionDescription" : `graph.range.${range}.description`)}</strong>
           <span className="graph-view-count" aria-live={playing ? "off" : "polite"}>{t("graph.visibleCount", { nodes: scene.nodes.length, edges: scene.edges.length })}</span>
@@ -1022,6 +1085,28 @@ export function GraphView({
             ? t("graph.staticFallbackFailed", { defaultValue: "Static graph fallback" })
             : t("graph.staticFallback", { defaultValue: "Static graph view" })}
         </summary>
+        <p className="graph-static-description">
+          {t("graph.staticFixedScope", {
+            defaultValue: "The static graph always shows this document's current direct connections (one step), regardless of the graph view.",
+          })}
+        </p>
+        {staticOpen && staticCoverageNotice ? (
+          <div className="graph-static-coverage">
+            <StatusBanner tone={staticCoverageNotice.tone}>
+              <strong>{staticCoverageNotice.tone === "warning"
+                ? t("graph.staticCoverageWarning", { defaultValue: "Some current direct relationships are not shown." })
+                : staticCoverageNotice.heading}</strong>
+              {staticCoverageNotice.messages.length ? <p>{staticCoverageNotice.messages.join(" ")}</p> : null}
+              {staticOmissionDescriptions.length ? <ul>
+                {staticOmissionDescriptions.map((description) => <li key={description}>{description}</li>)}
+              </ul> : null}
+              {staticHasDisplayQuota ? <p>{t("graph.omissions.appliedBudget", {
+                nodes: staticPayload.budget.applied.nodes, edges: staticPayload.budget.applied.edges,
+              })}</p> : null}
+              {staticOmissionDescriptions.length ? <p>{t("graph.omissions.noCounts")}</p> : null}
+            </StatusBanner>
+          </div>
+        ) : null}
         {staticOpen ? staticDiagram !== null ? (
           <MermaidDiagram decorateSvg={decorateStaticSvg} source={staticDiagram.source} />
         ) : (
@@ -1194,8 +1279,25 @@ function GraphLegend({ historical, nodeVisuals }: { historical: boolean; nodeVis
 
 
 
+/** The pin toggle. A requested pin that is not fixed yet stays cancellable. */
+function GraphDetailsPinButton({ onToggle, state }: { onToggle: () => void; state: LocalPinState }) {
+  const { t } = useTranslation("graph");
+  const pending = state === "waiting" || state === "pinning";
+  const label = state === "unpinned" ? t("graph.details.pin") : state === "pinned" ? t("graph.details.unpin")
+    : state === "pinning" ? t("graph.details.pinning") : t("graph.details.pinWaiting");
+  const cancel = state === "pinning" ? t("graph.details.pinningCancel") : t("graph.details.pinWaitingCancel");
+  return (
+    <button type="button" className={pending ? "graph-details-pin-pending" : undefined} onClick={onToggle}
+      aria-label={pending ? cancel : undefined}>
+      {label}
+      {state === "pinning" ? <Spinner decorative size={12} /> : null}
+    </button>
+  );
+}
+
 function GraphDetails({
   active,
+  below,
   historyEvents,
   historyEdges,
   historyNodes,
@@ -1219,13 +1321,15 @@ function GraphDetails({
   onFocus,
   onSelect,
   onTogglePin,
-  pinnedIds,
+  pinState,
   querySeeds,
   supportsExpand,
   workspaceGraphHref,
   workspaceId,
 }: {
   active: boolean;
+  /** Placed after the canvas and timeline, in the page, rather than over the canvas. */
+  below: boolean;
   historyEvents?: GraphTimelineEvent[];
   historyEdges: GraphEdge[];
   historyNodes?: GraphNode[];
@@ -1249,7 +1353,7 @@ function GraphDetails({
   onFocus: (id: string) => void;
   onSelect: (id: string, origin: LocalGraphSelectionOrigin) => void;
   onTogglePin: (node: GraphNode) => void;
-  pinnedIds: string[];
+  pinState: LocalPinState;
   querySeeds: GraphQueryPayload["query"]["seeds"];
   supportsExpand: boolean;
   workspaceGraphHref?: (node: GraphNode) => string | null;
@@ -1262,13 +1366,21 @@ function GraphDetails({
   useFocusRecovery(detailsRef, () => detailsRef.current, node?.id ?? edge?.id ?? null);
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const actionReasonId = useId();
+  const selectedId = node?.id ?? edge?.id ?? null;
+  const revealedIdRef = useRef(selectedId);
   useLayoutEffect(() => {
     // A newly selected object starts at its title and actions. Keep the
-    // sidebar's scroll position for ordinary updates to the same selection;
-    // never scroll the outer reader or move keyboard/pointer focus here.
+    // panel's scroll position for ordinary updates to the same selection and
+    // never move keyboard/pointer focus here. Over the canvas the outer reader
+    // stays put; below it the page is the scroller, so a new title is brought
+    // into view by the least movement.
     if (detailsRef.current) detailsRef.current.scrollTop = 0;
     setSheetExpanded(false);
-  }, [node?.id, edge?.id]);
+    if (below && selectedId && revealedIdRef.current !== selectedId) {
+      detailsRef.current?.querySelector(".graph-details-title-row")?.scrollIntoView?.({ block: "nearest" });
+    }
+    revealedIdRef.current = selectedId;
+  }, [below, selectedId]);
   useLayoutEffect(() => {
     // Expanding upward from a scrolled canvas must keep the close control
     // and the revealed actions within the reader viewport.
@@ -1303,8 +1415,8 @@ function GraphDetails({
         <h4 id="graph-details-heading">{t("graph.details.heading")}</h4>
         <button aria-label={clearLabel} className="graph-details-close" onClick={onClearSelection} type="button"><X size={17} aria-hidden="true" /></button>
       </div>
-      <button className="graph-details-sheet-toggle" type="button" aria-expanded={sheetExpanded} onClick={() => setSheetExpanded((value) => !value)}>{t(sheetExpanded ? "graph.details.collapseSheet" : "graph.details.expandSheet")}</button>
-      <h5 className="graph-details-title">{node?.label ?? (edge ? localEdgeKindLabel(edge, t) : null)}</h5>
+      {below ? null : <button className="graph-details-sheet-toggle" type="button" aria-expanded={sheetExpanded} onClick={() => setSheetExpanded((value) => !value)}>{t(sheetExpanded ? "graph.details.collapseSheet" : "graph.details.expandSheet")}</button>}
+      <h5 className="graph-details-title" title={node?.label ?? (edge ? localEdgeKindLabel(edge, t) : undefined)}>{node?.label ?? (edge ? localEdgeKindLabel(edge, t) : null)}</h5>
       {historicalOnly ? <p className="graph-history-inactive">{t("graph.historyUi.notPresent")}</p> : null}
       {node ? <LocalNodeMeta context={listContext} node={node} /> : null}
       {nodeActions?.reason ? <p className="graph-action-reason" id={actionReasonId}>{nodeActions.reason}</p> : null}
@@ -1338,14 +1450,19 @@ function GraphDetails({
       <div className="graph-details-footer">
         {href ? <Link className="graph-details-open" to={href}>{t("graph.open")}</Link> : null}
         {node && nodeActions ? <GraphSelectedNodeActions actions={{ ...nodeActions, href: null }} node={node} onCollapse={onCollapse} onExpand={onExpand} reasonId={actionReasonId} /> : null}
-        <details className="graph-details-more" onToggle={(event) => { if (event.currentTarget.open) setSheetExpanded(true); }}><summary aria-label={t("graph.view.more")}><MoreHorizontal size={17} aria-hidden="true" /></summary><div>
+        <details className="graph-details-more" onToggle={(event) => {
+          if (!event.currentTarget.open) return;
+          const more = event.currentTarget;
+          if (!below) setSheetExpanded(true);
+          requestAnimationFrame(() => fitDetailsMenu(detailsRef.current, more, below));
+        }}><summary aria-label={t("graph.view.more")}><MoreHorizontal size={17} aria-hidden="true" /></summary><div>
           <button type="button" onClick={(event) => {
             event.currentTarget.closest("details")?.removeAttribute("open");
             setSheetExpanded(false);
             const id = (node ?? edge)!.id;
             requestAnimationFrame(() => onCenter(id));
           }}>{t("graph.details.center")}</button>
-          {node ? <button type="button" onClick={() => onTogglePin(node)}>{t(pinnedIds.includes(node.id) ? "graph.details.unpin" : "graph.details.pin")}</button> : null}
+          {node ? <GraphDetailsPinButton onToggle={() => onTogglePin(node)} state={pinState} /> : null}
           {nodeActions?.href ? <Link to={nodeActions.href}>{t("graph.showInKnowledgeMap")}</Link> : null}
         </div></details>
       </div>
@@ -1353,6 +1470,32 @@ function GraphDetails({
   );
 }
 
+
+/** Details closed below a full-length List: bring the reader back to the row it came from. */
+function returnToListRow(region: HTMLElement | null, id: string) {
+  const rows = region?.querySelectorAll<HTMLElement>(".graph-list-view button[data-local-graph-id]") ?? [];
+  Array.from(rows).find((row) => row.dataset.localGraphId === id)?.scrollIntoView?.({ block: "center" });
+}
+
+/** More opens upward from the footer; it stops under the title row so it never covers Clear selection. */
+function fitDetailsMenu(details: HTMLElement | null, more: HTMLDetailsElement, below: boolean) {
+  const title = details?.querySelector<HTMLElement>(".graph-details-title-row");
+  const footer = details?.querySelector<HTMLElement>(".graph-details-footer");
+  const menu = more.querySelector<HTMLElement>(":scope > div");
+  if (!title || !footer || !menu || !more.open) return;
+  menu.style.maxHeight = "";
+  if (!menu.offsetHeight) return;
+  const gap = 6;
+  const overlap = () => title.getBoundingClientRect().bottom + gap - menu.getBoundingClientRect().top;
+  if (below && overlap() > 0) {
+    // The sticky footer holds its place while the page lifts the title clear of the menu.
+    title.style.scrollMarginBottom = `${footer.getBoundingClientRect().bottom - menu.getBoundingClientRect().top + gap}px`;
+    title.scrollIntoView({ block: "nearest" });
+    title.style.scrollMarginBottom = "";
+  }
+  const remaining = overlap();
+  if (remaining > 0) menu.style.maxHeight = `${Math.max(0, menu.offsetHeight - remaining)}px`;
+}
 
 type SelectedNodeActions = {
   action: "expand" | "collapse";
@@ -1673,17 +1816,21 @@ function graphLabelGroupForFilter(key: keyof GraphFilters): GraphLabelGroup {
   return groups[key];
 }
 
-function graphCoverageNotice(payload: GraphQueryPayload, t: TFunction) {
+function graphCoverageNotice(
+  payload: Pick<GraphQueryPayload, "truncated" | "completeness" | "omissions" | "warnings">
+    & Partial<Pick<GraphQueryPayload, "history">>,
+  t: TFunction,
+) {
   const omissions = payload.omissions ?? [];
-  const codes = [...new Set([...(payload.warnings ?? []), ...(payload.history.warnings ?? [])])];
+  const codes = [...new Set([...(payload.warnings ?? []), ...(payload.history?.warnings ?? [])])];
   // Partial temporal coverage belongs to the Timeline, not to a missing-item
   // warning on an otherwise complete graph. Real budgets/privacy limits stay.
-  if (payload.history.mode !== "current" && !payload.truncated && omissions.length === 0
+  if (payload.history && payload.history.mode !== "current" && !payload.truncated && omissions.length === 0
     && payload.completeness === "complete"
     && codes.every((code) => code === "history_coverage_partial")) return null;
   const hasCoverageRestriction = payload.truncated
     || payload.completeness !== "complete"
-    || payload.history.status !== "complete"
+    || Boolean(payload.history && payload.history.status !== "complete")
     || omissions.length > 0;
   if (!hasCoverageRestriction && !codes.length) return null;
 
@@ -1695,7 +1842,7 @@ function graphCoverageNotice(payload: GraphQueryPayload, t: TFunction) {
     && omissions.every((omission) => omission.reason === "folder_node")
     && payload.completeness !== "bounded_sample"
     && payload.completeness !== "privacy_suppressed"
-    && payload.history.status === "complete"
+    && (!payload.history || payload.history.status === "complete")
     && codes.every((code) => code === "graph_budget_applied" || code === "usage_relation_signals_disabled");
   const settingsOnly = !hasCoverageRestriction
     && codes.every((code) => code === "usage_relation_signals_disabled");
@@ -1705,7 +1852,7 @@ function graphCoverageNotice(payload: GraphQueryPayload, t: TFunction) {
   // Observation history also supplies current relationships. Its source cap
   // is not merely a timeline restriction, even when history.status is complete.
   // Only explicit complete/untruncated scene metadata permits this distinction.
-  const currentHistoryOnly = payload.history.mode === "current"
+  const currentHistoryOnly = payload.history?.mode === "current"
     && payload.completeness === "complete"
     && !payload.truncated
     && omissions.length === 0
@@ -1726,7 +1873,7 @@ function graphCoverageNotice(payload: GraphQueryPayload, t: TFunction) {
         : currentHistoryOnly
           ? t("graph.omissions.timelineNotice", { defaultValue: "Timeline coverage is limited." })
           : t("graph.coverageWarning", { defaultValue: "This graph has bounded or partial coverage." }),
-    messages: graphWarningMessages(t, messageCodes, payload.history.mode === "current"),
+    messages: graphWarningMessages(t, messageCodes, !payload.history || payload.history.mode === "current"),
   };
 }
 

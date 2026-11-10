@@ -75,17 +75,25 @@ vi.mock("../../graph/useWorkspaceGraphCapability", () => ({
   }),
 }));
 vi.mock("../../graph/GraphCanvas", () => ({
-  GraphCanvas: ({ scene, pinnedIds }: {
+  GraphCanvas: function MockGraphCanvas({ scene, pinnedIds, pinnedPositions, onPin }: {
     scene: { nodes: unknown[]; edges: unknown[] };
     pinnedIds: string[];
-  }) => (
-    <div
-      data-edges={scene.edges.length}
-      data-nodes={scene.nodes.length}
-      data-pinned={pinnedIds.join(",")}
-      data-testid="context-graph-canvas"
-    />
-  ),
+    pinnedPositions: Record<string, { x: number; y: number }>;
+    onPin: (id: string, position: { x: number; y: number }) => void;
+  }) {
+    // Like the real canvas, report the coordinate it keeps for a new pin.
+    useEffect(() => {
+      for (const id of pinnedIds) if (!pinnedPositions[id]) onPin(id, { x: 0, y: 0 });
+    }, [onPin, pinnedIds, pinnedPositions]);
+    return (
+      <div
+        data-edges={scene.edges.length}
+        data-nodes={scene.nodes.length}
+        data-pinned={pinnedIds.join(",")}
+        data-testid="context-graph-canvas"
+      />
+    );
+  },
 }));
 
 const BASE = "http://127.0.0.1:21080";
@@ -752,6 +760,12 @@ describe("ContextScreen", () => {
     ).toHaveAttribute("href", `/workspaces/${WORKSPACE_ID}/context/pages/new`);
     expect(screen.queryByRole("link", { name: "Context home" })).toBeNull();
     expect(screen.getByText("Unpublished draft")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Create Context item" }));
+    const createDialog = screen.getByRole("dialog");
+    expect(within(createDialog).getByRole("textbox", { name: "Page title" })).toBeVisible();
+    expect(within(createDialog).getByRole("radio", { name: "Folder" })).toBeVisible();
+    await userEvent.click(within(createDialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("shows a publish arrival notice once and clears navigation state", async () => {
@@ -1514,7 +1528,7 @@ describe("ContextScreen", () => {
       name: "Discard alternative v1? This cannot be undone.",
     });
     const confirm = within(dialog).getByRole("button", {
-      name: "Discard branch permanently",
+      name: "Discard",
     });
     expect(confirm).toBeDisabled();
     await userEvent.type(
@@ -1921,7 +1935,7 @@ describe("ContextScreen", () => {
     });
     expect(screen.queryByTestId("graph-view")).toBeNull();
     expect(screen.queryByText("Late old authority node")).toBeNull();
-    expect(graphRequests).toBe(2);
+    expect(graphRequests).toBe(3);
 
     await act(async () => { pendingDetail.resolve(jsonResponse(freshDetailBody)); });
     const freshGraph = await screen.findByTestId("graph-view");
@@ -1932,7 +1946,7 @@ describe("ContextScreen", () => {
     const freshDetails = await selectGraphNodeDetails(freshGraph, "Architecture Notes");
     expect(within(freshDetails).getByRole("button", { name: "Pin" })).toBeEnabled();
     expect(within(freshDetails).queryByRole("button", { name: "Unpin" })).toBeNull();
-    expect(graphRequests).toBe(3);
+    expect(graphRequests).toBe(4);
   });
 
   it.each([
@@ -2135,12 +2149,16 @@ describe("ContextScreen", () => {
       String(input).includes(`/workspaces/${WORKSPACE_ID}/graph/query`),
     );
     expect(
-      JSON.parse(String(graphCallsAfterExpand.at(-1)?.[1]?.body)),
+      JSON.parse(String(graphCallsAfterExpand.at(-2)?.[1]?.body)),
     ).toMatchObject({
       seeds: [
         { kind: "context_page", id: PAGE_ID },
         { kind: "context_page", id: SECOND_PAGE_ID },
       ],
+    });
+    expect(JSON.parse(String(graphCallsAfterExpand.at(-1)?.[1]?.body))).toMatchObject({
+      seeds: [{ kind: "context_page", id: PAGE_ID }],
+      depth: 1, relation_scope: "direct", time: { mode: "current" },
     });
 
     await userEvent.click(
@@ -2161,13 +2179,13 @@ describe("ContextScreen", () => {
     });
   });
 
-  it("requests server Local scopes while keeping the static graph on direct relationships", async () => {
+  it("keeps the static graph on current direct relationships across Local scopes and history views", async () => {
     contextMermaid.render.mockClear();
     const fetchMock = await renderDecisionLog({
       graphQueryHandler: (request) => {
-        const payload = contextGraphPayload(PAGE_ID, "current", request.seeds,
+        const payload = contextGraphPayload(PAGE_ID, request.time?.mode ?? "current", request.seeds,
           undefined, request.depth, request.relation_scope);
-        if (request.relation_scope === "neighbors") {
+        if (request.relation_scope === "neighbors" || request.time?.mode !== "current") {
           // A broad budget can omit a direct neighbor. The static scene must
           // come from its direct request, not a trimmed broad response.
           payload.nodes = payload.nodes.filter((node) => node.id !== "node:library-1");
@@ -2186,6 +2204,7 @@ describe("ContextScreen", () => {
     await waitFor(() => expect(contextMermaid.render).toHaveBeenLastCalledWith(
       expect.any(String), expect.stringContaining("Deployment Runbook"), expect.any(HTMLElement),
     ));
+    const directSource = contextMermaid.render.mock.lastCall?.[1];
     await userEvent.click(graphUi.getByRole("radio", { name: "Neighbor connections" }));
     await waitFor(() => expect(graphUi.getByRole("radio", { name: "Neighbor connections" }))
       .toHaveAttribute("aria-checked", "true"));
@@ -2209,9 +2228,31 @@ describe("ContextScreen", () => {
     expect(contextMermaid.render).toHaveBeenLastCalledWith(
       expect.any(String), expect.stringContaining("Deployment Runbook"), expect.any(HTMLElement),
     );
+    await userEvent.click(graphUi.getByRole("radio", { name: /Change history/ }));
+    await waitFor(() => expect(graphUi.getByRole("radio", { name: /Change history/ }))
+      .toHaveAttribute("aria-checked", "true"));
+    expect(requests().at(-2)).toMatchObject({ time: { mode: "appearance" } });
+    expect(requests().at(-1)).toMatchObject({
+      seeds: [{ kind: "context_page", id: PAGE_ID }],
+      depth: 1, relation_scope: "direct", time: { mode: "current" }, budget: { nodes: 250, edges: 750 }, cursor: null,
+    });
+    expect(screen.getByTestId("context-graph-canvas")).toHaveAttribute("data-nodes", "2");
+    await waitFor(() => expect(contextMermaid.render).toHaveBeenLastCalledWith(
+      expect.any(String), directSource, expect.any(HTMLElement),
+    ));
+    await userEvent.click(graphUi.getByRole("radio", { name: /Activity history/ }));
+    await waitFor(() => expect(graphUi.getByRole("radio", { name: /Activity history/ }))
+      .toHaveAttribute("aria-checked", "true"));
+    expect(requests().at(-2)).toMatchObject({ time: { mode: "action" } });
+    expect(requests().at(-1)).toMatchObject({
+      depth: 1, relation_scope: "direct", time: { mode: "current" }, budget: { nodes: 250, edges: 750 },
+    });
+    await waitFor(() => expect(contextMermaid.render).toHaveBeenLastCalledWith(
+      expect.any(String), directSource, expect.any(HTMLElement),
+    ));
     await userEvent.click(readerTabs.getByRole("tab", { name: /^View$/ }));
     await userEvent.click(readerTabs.getByRole("tab", { name: /^Graph, Preview$/ }));
-    expect(requests()).toHaveLength(5);
+    expect(requests()).toHaveLength(9);
   });
 
   it("rebuilds supported history queries while retaining expanded seeds and the user's current depth", async () => {
@@ -2233,13 +2274,17 @@ describe("ContextScreen", () => {
       String(input).endsWith(`/workspaces/${WORKSPACE_ID}/graph/query`),
     ).map(([, init]) => JSON.parse(String(init?.body)));
     const seeds = [{ kind: "context_page", id: PAGE_ID }, { kind: "context_page", id: SECOND_PAGE_ID }];
-    expect(requests().at(-1)).toMatchObject({
+    expect(requests().at(-2)).toMatchObject({
       seeds, depth: 1, time: { mode: "appearance" }, budget: { nodes: 500, edges: 1500 }, cursor: null,
+    });
+    expect(requests().at(-1)).toMatchObject({
+      seeds: [{ kind: "context_page", id: PAGE_ID }],
+      depth: 1, relation_scope: "direct", time: { mode: "current" }, budget: { nodes: 250, edges: 750 },
     });
     await userEvent.click(graphUi.getByRole("radio", { name: "Current relationships" }));
     await waitFor(() => expect(graphUi.getByRole("radio", { name: "Two-step expansion" })).toHaveAttribute("aria-disabled", "false"));
     expect(graphUi.getByRole("radio", { name: "Neighbor connections" })).toHaveAttribute("aria-checked", "true");
-    expect(requests().at(-1)).toMatchObject({
+    expect(requests().at(-2)).toMatchObject({
       seeds, depth: 1, time: { mode: "current" }, budget: { nodes: 250, edges: 750 },
     });
   });
@@ -2348,7 +2393,7 @@ describe("ContextScreen", () => {
       fetchMock.mock.calls.filter(([input]) =>
         String(input).includes(`/workspaces/${WORKSPACE_ID}/graph/query`),
       ),
-    ).toHaveLength(3);
+    ).toHaveLength(5);
   });
 
   it("shows a localized generic warning for independently bounded Inspector relationship lists", async () => {
@@ -2481,7 +2526,7 @@ describe("ContextScreen", () => {
     expect(within(dialog).getByText("Ready")).toBeInTheDocument();
 
     await userEvent.click(
-      within(dialog).getByRole("button", { name: "Copy workspace link" }),
+      within(dialog).getByRole("button", { name: "Copy link" }),
     );
     expect(writeText).toHaveBeenCalledWith(
       expect.stringMatching(
@@ -3453,8 +3498,9 @@ describe("ContextScreen", () => {
       screen.getByLabelText("Mobile workspace actions"),
     );
     expect(
-      mobileActions.getByRole("button", { name: "Create Context item" }),
-    ).toBeInTheDocument();
+      mobileActions.getByRole("link", { name: "New Context page" }),
+    ).toHaveClass("icon-button", "primary");
+    expect(mobileActions.queryByRole("button", { name: "New Context page" })).toBeNull();
   });
 
   it("shows the setup sequence and writing CTA when Context is empty", async () => {

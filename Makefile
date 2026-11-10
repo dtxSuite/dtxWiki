@@ -1,4 +1,4 @@
-.PHONY: install dev-db-up dev-db-down migrate seed backend-dev frontend-dev export-schemas gen-client verify-gen-client verify-generated-schemas bundle-frontend build-wheel docker-image docker-build test-backend test-backend-scale test-backend-serial test-backend-benchmarks test-migrations test-graph-view test-frontend test-e2e test-packaged test-acceptance test-static test-release-gate test lint check-i18n sync-csp
+.PHONY: install dev-db-up dev-db-down migrate seed backend-dev frontend-dev export-schemas gen-client verify-gen-client verify-generated-schemas bundle-frontend build-wheel docker-image docker-build check-frontend test-backend test-backend-scale test-backend-serial test-backend-benchmarks test-migrations test-graph-view test-frontend test-e2e test-packaged test-acceptance test-static test-release-gate test lint check-i18n sync-csp
 
 PYTHON ?= python3
 VENV ?= .venv
@@ -137,6 +137,21 @@ test-graph-view:
 test-frontend:
 	npm --workspace frontend run test -- --run
 
+# The frontend CI job and local UI validation use the same complete gate.
+# Shared UI/CSS contracts live in tests/static even though backend CI also runs them.
+check-frontend:
+	$(MAKE) verify-generated-schemas
+	$(MAKE) test-static
+	npm --workspace frontend run typecheck
+	npm --workspace frontend run lint
+	$(MAKE) check-i18n
+	$(MAKE) test-frontend
+	npm run desktop:test
+	node tests/e2e/network_retry.test.mjs
+	node tests/e2e/redact-network.test.mjs
+	node tests/e2e/page-diagnostics.test.mjs
+	node tests/e2e/run-e2e.test.mjs
+
 test-e2e:
 	npm run test:e2e
 
@@ -170,5 +185,25 @@ check-i18n:
 
 sync-csp:
 	$(VENV_PYTHON) -m backend.scripts.sync_csp_templates
+
+.PHONY: version set-version sync-version check-version verify-release-artifacts
+version:
+	@$(VENV_PYTHON) scripts/release_version.py show
+
+# VERSION is a Make input only. pyproject.toml remains the stored source.
+set-version:
+	@test -n "$(VERSION)" || { echo 'Usage: make set-version VERSION=X.Y.Z' >&2; exit 2; }
+	$(VENV_PYTHON) scripts/release_version.py set "$(VERSION)"
+	uv sync --locked --extra dev
+
+sync-version:
+	$(VENV_PYTHON) scripts/release_version.py sync
+	uv sync --locked --extra dev
+
+check-version:
+	$(VENV_PYTHON) scripts/release_version.py check
+
+verify-release-artifacts:
+	$(VENV_PYTHON) scripts/verify_wheel_artifact.py dist --release-version "$$($(VENV_PYTHON) scripts/release_version.py show)"
 
 -include Makefile.local
