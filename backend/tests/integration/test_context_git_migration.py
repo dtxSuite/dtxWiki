@@ -13,13 +13,19 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.orm import Session
 
-from backend.app.bootstrap import resolve_alembic_ini, resolve_migrations_dir
+from backend.app.bootstrap import resolve_alembic_ini
 from backend.context_versions.adapters.git_libgit2 import GitSnapshotStore
 from backend.context_versions.domain import ContentPayload
 from backend.models.context import ContextPage
 from backend.models.review import ReviewItem
 from backend.scripts.seed_dev import seed_default_workspace
 from backend.tests.integration.test_context_review_publish import _seed_review
+from backend.tests.utils.context_migration_phases import (
+    GIT_SNAPSHOTS,
+    HISTORICAL_BODIES,
+    RELEASE_023,
+    configure_context_migration_phases,
+)
 from backend.tests.utils.postgres import drop_reflected_postgres_metadata
 from backend.utils.block_identity import (
     compute_block_map_with_ids,
@@ -27,9 +33,6 @@ from backend.utils.block_identity import (
 )
 from backend.utils.content_hash import content_hash
 
-PARENT = "00ba02774c4a"
-REVISION = "74e5d4f912a6"
-BODY_REVISION = "9d8695419436"
 NEW_COLUMNS = {
     "commit_oid",
     "content_format",
@@ -56,7 +59,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
     engine = sa.create_engine(url)
     assert not (set(sa.inspect(engine).get_table_names()) - {"alembic_version"})
     config = Config(str(resolve_alembic_ini()))
-    config.set_main_option("script_location", str(resolve_migrations_dir()))
+    configure_context_migration_phases(config, tmp_path)
     config.set_main_option("sqlalchemy.url", url)
     root = tmp_path / "repositories"
     page_id, other_page_id = uuid4(), uuid4()
@@ -67,7 +70,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
     block_map = [{"id": "preserved-identity", "kind": "p"}]
     key = (lambda value: value.hex) if dialect == "sqlite" else (lambda value: value)
     try:
-        command.upgrade(config, PARENT)
+        command.upgrade(config, RELEASE_023)
         with Session(engine) as session:
             workspace_id = seed_default_workspace(session).id
             session.commit()
@@ -186,7 +189,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
 
         # Same traversal: prove missing root is rejected before the new DDL.
         with pytest.raises(RuntimeError, match="absolute.*Config.attributes"):
-            command.upgrade(config, REVISION)
+            command.upgrade(config, GIT_SNAPSHOTS)
         assert not NEW_COLUMNS.intersection(
             {
                 item["name"]
@@ -194,7 +197,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
             }
         )
         config.attributes["context_repositories_root"] = root
-        command.upgrade(config, REVISION)
+        command.upgrade(config, GIT_SNAPSHOTS)
         with engine.connect() as connection:
             table = sa.Table(
                 "context_page_version", sa.MetaData(), autoload_with=connection
@@ -304,7 +307,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
         assert columns["encoding"]["nullable"]
         assert columns["commit_oid"]["nullable"]
 
-        command.downgrade(config, PARENT)
+        command.downgrade(config, RELEASE_023)
         assert not NEW_COLUMNS.intersection(
             {
                 item["name"]
@@ -325,7 +328,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
             and preserved[item]["block_map"] == converted[item]["block_map"]
             for item in converted
         )
-        command.upgrade(config, REVISION)
+        command.upgrade(config, GIT_SNAPSHOTS)
         with engine.connect() as connection:
             table = sa.Table(
                 "context_page_version", sa.MetaData(), autoload_with=connection
@@ -349,7 +352,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
                 .values(body_md="not the recorded Git bytes")
             )
         with pytest.raises(RuntimeError, match="verification failed"):
-            command.upgrade(config, BODY_REVISION)
+            command.upgrade(config, HISTORICAL_BODIES)
         assert not next(
             item
             for item in sa.inspect(engine).get_columns("context_page_version")
@@ -369,7 +372,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
         # A matching body cannot detect identity loss: this independent guard
         # must also refuse before DDL, using the same migration/DB traversal.
         with pytest.raises(RuntimeError, match="verification failed"):
-            command.upgrade(config, BODY_REVISION)
+            command.upgrade(config, HISTORICAL_BODIES)
         assert not next(
             item
             for item in sa.inspect(engine).get_columns("context_page_version")
@@ -381,7 +384,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
                 .where(table.c.id == key(historical_id))
                 .values(block_map=block_map)
             )
-        command.upgrade(config, BODY_REVISION)
+        command.upgrade(config, HISTORICAL_BODIES)
 
         def stored_versions():
             with engine.connect() as connection:
@@ -447,7 +450,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
                 .values(commit_oid=restored[historical_id])
             )
         with pytest.raises(RuntimeError, match="verification failed"):
-            command.downgrade(config, REVISION)
+            command.downgrade(config, GIT_SNAPSHOTS)
         failed_restore = stored_versions()
         assert failed_restore[historical_id]["body_md"] is None
         assert failed_restore[other_history_id]["body_md"] is None
@@ -457,7 +460,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
                 .where(table.c.id == key(other_history_id))
                 .values(commit_oid=restored[other_history_id])
             )
-        command.downgrade(config, REVISION)
+        command.downgrade(config, GIT_SNAPSHOTS)
         hydrated = stored_versions()
         assert all(
             hydrated[item]["body_md"] == original["body_md"]
@@ -470,7 +473,7 @@ def test_context_git_snapshot_migration_traversal(tmp_path, dialect):
             for item in sa.inspect(engine).get_columns("context_page_version")
             if item["name"] == "body_md"
         )["nullable"]
-        command.upgrade(config, BODY_REVISION)
+        command.upgrade(config, HISTORICAL_BODIES)
         rereleased = stored_versions()
         assert rereleased[historical_id]["body_md"] is None
         assert rereleased[historical_id]["block_map"] is None

@@ -792,7 +792,11 @@ docker compose up -d app worker
 이미 이 head인 DB에도 v0.2.3의 단일 후속 migration을 적용합니다. v0.2.3 준비 중의
 `fec23ff328e6` DB는 원래 checkout으로 `00ba02774c4a`까지 올리고 백업·검증한 뒤
 전환해야 합니다. 제거된 revision을 `alembic stamp`로 우회하지 마세요. 배포된
-0.1.4 이하 DB는 v0.2 chain으로 직접 업그레이드합니다.
+0.1.2 이상 DB는 중간 앱 버전을 설치하지 않고 0.3.1로 직접 업그레이드합니다.
+
+0.3.1의 공유 Context 초안 변환은 역변환을 지원하지 않습니다. 업그레이드 전에 DB,
+Library 파일, Context `repositories/`, 환경 설정과 키의 백업을 함께 확보하세요.
+롤백하려면 해당 백업 세트와 이전 버전을 함께 복원합니다.
 
 ### 관리자 화면에서 버전 확인
 
@@ -845,7 +849,7 @@ readiness를 수행하며, 실패 시 자동 rollback하지 않고 복구 명령
 ```bash
 # systemd + private wheel index
 sudo dtxwiki update --check               # 새 버전 유무만 (가능하면 exit 10)
-sudo dtxwiki update --version 0.2.4       # 특정 버전 핀
+sudo dtxwiki update --version 0.3.1       # 특정 버전 핀
 sudo dtxwiki update --index-url https://pypi.internal/simple   # 사설 wheel index
 ```
 
@@ -1331,10 +1335,9 @@ endpoint를 사용한다.
 
 0.1.2부터 DB migration은 **릴리스 그룹**, **revision ID**, **변경 내용 이름**을 구분해
 관리합니다. 당시 ID·파일 배치 정리는 schema·데이터 작업을 바꾸지 않았습니다.
-새 설치와 기존 배포본 업그레이드는 v0.2.3 head `00ba02774c4a`에 도달합니다.
-v0.2.1·v0.2.2의 head `5b7e5c149279` 뒤에 단일 릴리스 migration
-`00ba02774c4a`가 연결되어 workspace Labs 정책 컬럼과 보관된 Inbox 목록의 부분
-인덱스를 추가합니다. 이미 배포된 `5b7e5c149279`와 그 이전 구현은 유지합니다.
+새 설치와 기존 배포본 업그레이드는 v0.3.1 head `c3d2e4f601ab`에 도달합니다.
+v0.2.3·v0.2.4의 head `00ba02774c4a`에서 이 단일 migration을 적용해 Context 이력
+본문의 Git 저장, MCP 호출 수명 주기, 문서 URL, 공유 초안 관련 변경을 반영합니다.
 
 v0.1.2부터의 배포본은 중간 버전을 따로 설치하지 않고 현재 버전으로 직접
 업그레이드할 수 있습니다. 각 버전의 migration 구현과 연결은 이후 통합 시에도
@@ -1342,24 +1345,25 @@ v0.1.2부터의 배포본은 중간 버전을 따로 설치하지 않고 현재 
 
 | 기존 배포 버전 | 기존 DB revision | 현재 버전으로의 경로 |
 | --- | --- | --- |
-| 새 설치 | 없음, DB가 비어 있음 | v0.2.1 schema를 직접 초기화한 뒤 v0.2.3의 단일 후속 migration 적용 |
-| v0.1.2 | `efcbcf724889` | 정식 0.1.3 → 0.1.4 → v0.2 경로 적용 |
-| v0.1.3 | `19db79d3e622` | 정식 0.1.4 → v0.2 경로 적용 |
-| v0.1.4 | `eb86fdacb1bb` | 남은 v0.2 변경과 v0.2.3 후속 migration 적용, 0.1.4 로그인·계정 보존 데이터 유지 |
-| v0.2.1·v0.2.2 | `5b7e5c149279` | v0.2.3의 Labs 정책·Inbox 인덱스 migration 적용 |
-| v0.2.3 | `00ba02774c4a` | 이미 최신 schema이면 migration 생략 |
+| 새 설치 | 없음, DB가 비어 있음 | v0.2.1 schema를 직접 초기화한 뒤 v0.2.3 및 v0.3.1 migration 적용 |
+| v0.1.2 | `efcbcf724889` | 0.1.3 → 0.1.4 → v0.2 → v0.3.1 경로 적용 |
+| v0.1.3 | `19db79d3e622` | 0.1.4 → v0.2 → v0.3.1 경로 적용 |
+| v0.1.4 | `eb86fdacb1bb` | v0.2와 v0.3.1 migration 적용, 0.1.4 로그인·계정 보존 데이터 유지 |
+| v0.2.1·v0.2.2 | `5b7e5c149279` | v0.2.3의 Labs 정책·Inbox 인덱스와 v0.3.1 migration 적용 |
+| v0.2.3·v0.2.4 | `00ba02774c4a` | v0.3.1의 단일 migration 적용 |
 
 ```text
 기존 배포본: efcbcf724889 (0.1.2) → 19db79d3e622 (0.1.3)
            → eb86fdacb1bb (0.1.4) → 5b7e5c149279 (0.2.1)
-           → 00ba02774c4a (Labs 정책·Inbox 인덱스, 0.2.3 head)
+           → 00ba02774c4a (0.2.3·0.2.4)
+           → c3d2e4f601ab (0.3.1)
 
 새 설치: base → 5b7e5c149279 (v0.2.1 schema 직접 생성)
-        → 00ba02774c4a
+        → 00ba02774c4a → c3d2e4f601ab
 ```
 
 새 DB는 과거 migration을 재실행하지 않고 고정된 v0.2.1 schema를 직접 생성한 뒤
-v0.2.3의 단일 후속 migration을 적용합니다.
+v0.2.3과 v0.3.1의 후속 migration을 적용합니다.
 0.1.2·0.1.3 DB는 배포된 0.1.4 migration을 거쳐 업그레이드합니다.
 0.1.4 DB는 이미 적용된 SSO·계정 보존·Review 변경은 재실행하지 않고 Inbox·링크
 locator·Graph·문서 참고문헌·Chats 변경을 적용합니다. 시작 시 bootstrap과 직접
@@ -1458,6 +1462,8 @@ backend/migrations/
 │   ├── v0_2/
 │   │   ├── 5b7e5c149279_release_0_2.py
 │   │   └── 00ba02774c4a_release_0_2_3.py
+│   ├── v0_3/
+│   │   └── c3d2e4f601ab_release_0_3_1.py
 │   └── unreleased/                        # 개발 중인 revision, 배포 전 이동·통합
 ├── initialization/                        # 새 설치용 v0.2.1 초기화
 │   ├── versions/v0_2/5b7e5c149279_initial_schema.py
@@ -1465,6 +1471,7 @@ backend/migrations/
 ├── revision_modules/                      # 릴리스 그룹별 고정 helper 구현
 │   ├── v0_1/
 │   ├── v0_2/
+│   ├── v0_3/
 │   └── unreleased/                        # 개발 중인 helper, 배포 전 import 경로 변경
 ├── release_manifest.json                  # 스키마 릴리스별 그룹과 head 매핑
 └── frozen_revisions.json                  # 배포된 migration 구현의 해시
@@ -1523,8 +1530,8 @@ sudo dtxwiki db revision-inventory --configured prod
 
 ```text
 Database revision inventory (evidence only; not migration approval)
-code heads: 00ba02774c4a
-prod: status=ok revisions=00ba02774c4a consistency=consistent
+code heads: c3d2e4f601ab
+prod: status=ok revisions=c3d2e4f601ab consistency=consistent
 ```
 
 `revisions`는 DB에 기록된 revision이고, `code heads`는 설치된 코드의 최신 revision입니다.

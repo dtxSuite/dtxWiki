@@ -15,6 +15,7 @@ from backend.tests.utils.migration_paths import configure_test_repositories
 pytestmark = pytest.mark.integration
 
 BASELINE = "bd62193d5cf6"
+NORMALIZATION_REVISION = "efcbcf724889"
 
 
 @pytest.fixture(scope="session")
@@ -271,7 +272,7 @@ def test_backfills_legacy_relation_arrays_and_downgrade_restores_them(
             },
         )
 
-    command.upgrade(config, "872d9c3e104b")
+    command.upgrade(config, NORMALIZATION_REVISION)
 
     with engine.connect() as connection:
         citations = connection.execute(
@@ -400,4 +401,4 @@ def test_raises_on_broken_pairing(tmp_path, sqlite_templates):
         )
 
     with pytest.raises(Exception, match="does not"):
-        command.upgrade(config, "872d9c3e104b")
+        command.upgrade(config, NORMALIZATION_REVISION)

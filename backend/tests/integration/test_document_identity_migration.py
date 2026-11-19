@@ -11,7 +11,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.orm import Session
 
-from backend.app.bootstrap import resolve_alembic_ini, resolve_migrations_dir
+from backend.app.bootstrap import resolve_alembic_ini
 from backend.models import (
     ClientDelegatedTask,
     ContextPage,
@@ -24,11 +24,13 @@ from backend.models.coverage import KnowledgeCoverageGap
 from backend.models.mcp_trace import MCPWriteIdempotency
 from backend.models.tree import WorkspaceTreeNode
 from backend.scripts.seed_dev import seed_default_workspace
+from backend.tests.utils.context_migration_phases import (
+    DOCUMENT_IDENTITY,
+    MCP_CALL_LIFECYCLE,
+    configure_context_migration_phases,
+)
 from backend.tests.utils.postgres import drop_reflected_postgres_metadata
 from backend.utils.content_hash import content_hash
-
-PARENT = "872d9c3e104b"
-REVISION = "e4f7a2c901bd"
 
 
 @pytest.mark.release_migration
@@ -47,7 +49,7 @@ def test_document_identity_conversion_traversal(tmp_path, dialect):
     engine = sa.create_engine(url)
     assert not (set(sa.inspect(engine).get_table_names()) - {"alembic_version"})
     config = Config(str(resolve_alembic_ini()))
-    config.set_main_option("script_location", str(resolve_migrations_dir()))
+    configure_context_migration_phases(config, tmp_path)
     config.set_main_option("sqlalchemy.url", url)
     config.attributes["context_repositories_root"] = tmp_path / "repositories"
     now = datetime(2026, 11, 15, tzinfo=UTC)
@@ -65,7 +67,7 @@ def test_document_identity_conversion_traversal(tmp_path, dialect):
         uuid4() for _ in range(5)
     )
     try:
-        command.upgrade(config, PARENT)
+        command.upgrade(config, MCP_CALL_LIFECYCLE)
         with Session(engine) as session:
             workspace_id = seed_default_workspace(session).id
             session.add(
@@ -367,7 +369,7 @@ def test_document_identity_conversion_traversal(tmp_path, dialect):
                 return state
 
         original = stored_state()
-        command.upgrade(config, REVISION)
+        command.upgrade(config, DOCUMENT_IDENTITY)
         with Session(engine) as session:
             task = session.get(ClientDelegatedTask, task_id)
             assert task.payload["page_id"] == str(page_id)
@@ -506,10 +508,10 @@ def test_document_identity_conversion_traversal(tmp_path, dialect):
             assert "PRIVATE TRACE BODY" not in private_state
             assert "Kept question" not in private_state
             assert "Kept answer" not in private_state
-        command.downgrade(config, PARENT)
+        command.downgrade(config, MCP_CALL_LIFECYCLE)
         assert "document_locator_rollback" not in sa.inspect(engine).get_table_names()
         assert stored_state() == original
-        command.upgrade(config, REVISION)
+        command.upgrade(config, DOCUMENT_IDENTITY)
         # Later authored metadata survives reversal, and canonical objects
         # appended to an existing trace still get the previous wire fields.
         with Session(engine) as session:
@@ -615,7 +617,7 @@ def test_document_identity_conversion_traversal(tmp_path, dialect):
                 .where(jobs.c.id == completed_job_id)
                 .values(status="completed", progress=100)
             )
-        command.downgrade(config, PARENT)
+        command.downgrade(config, MCP_CALL_LIFECYCLE)
         with Session(engine) as session:
             assert session.get(ClientDelegatedTask, task_id).payload == {
                 **original["client_delegated_task"][0]["payload"],
@@ -659,7 +661,7 @@ def test_document_identity_conversion_traversal(tmp_path, dialect):
                     "concept_path": f"/library/{library_id}.md",
                 }
             ]
-        command.upgrade(config, REVISION)
+        command.upgrade(config, DOCUMENT_IDENTITY)
         with engine.connect() as connection:
             assert (
                 connection.scalar(

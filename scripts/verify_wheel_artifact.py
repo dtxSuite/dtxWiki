@@ -170,6 +170,33 @@ FROZEN_MIGRATIONS = {
     "revision_modules/v0_2/lifetime_co_access_v1.py": (
         "d86ff3130305d73bda12f8618b4ce6066b35e22b58a41df8046f4d934f49567f"
     ),
+    "revision_modules/v0_3/__init__.py": (
+        "222e69501eea4aa437e0bd13de09ed6d7af13c41cbcf058f7b666b0eff109ddf"
+    ),
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/__init__.py": (
+        "680012cb282a4f0c0e8475795e04f2e4111a4c8b608597a82f506baf46e372d9"
+    ),
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/active_block_maps.py": (
+        "0d22f950079562390653f53a2247d9e6bf7189a00146942056e5ae38f938ea79"
+    ),
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_content_to_git.py": (
+        "1554dc9e8054ff5fd54809203597ecdff5f5da157e481664340e9b6d0d33f85b"
+    ),
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_drafts.py": (
+        "5f4ce84b20c1be5339c26ce38656ab00d3d8d9964647e701bc96108c6c26620c"
+    ),
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_git_bodies.py": (
+        "3d1d7b1da3142c2af8c2bcc2d90456b0aaa6fb99ff48e5aad2d14ec1f8f2ec45"
+    ),
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/document_identity.py": (
+        "f91c7602e69dfdc5e28ba6eb8d84a0e53b453ade21ecee5f93e23886ace19641"
+    ),
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/document_locator_rollback.py": (
+        "84f60ebcd7dae8dc5b158a8ce31ca1b1ce040712fb82ca8fe09531c2b62114d2"
+    ),
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/schema.py": (
+        "ae1528e1f66ca2727bba0302df998cc55ca1dd42c7f01abd9b53ccfc6a740409"
+    ),
     "versions/v0_0/bd62193d5cf6_initial_schema.py": (
         "1c944d1f3c1d5427ff40470aacf1fbf611092a8e7e1111f19bc4089d13bd45e8"
     ),
@@ -187,6 +214,9 @@ FROZEN_MIGRATIONS = {
     ),
     "versions/v0_2/00ba02774c4a_release_0_2_3.py": (
         "c4248b0d84bfc05e0d060c8eba7d136953b462d1882f931dc8c3514f223d90fc"
+    ),
+    "versions/v0_3/c3d2e4f601ab_release_0_3_1.py": (
+        "4f03b2801f261714a1578999c99c1744f5f0201ac2a41983cf5a5f054803a931"
     ),
 }
 FROZEN_MANIFEST = Path("backend") / "migrations" / "frozen_revisions.json"
@@ -450,6 +480,7 @@ def _check_alembic_payload(root: Path) -> list[str]:
             "0.1.4": {"group": "v0_1", "head": "eb86fdacb1bb"},
             "0.2.1": {"group": "v0_2", "head": "5b7e5c149279"},
             "0.2.3": {"group": "v0_2", "head": "00ba02774c4a"},
+            "0.3.1": {"group": "v0_3", "head": "c3d2e4f601ab"},
         }
         aliases = {
             "0001_initial_release": "bd62193d5cf6",
@@ -481,7 +512,8 @@ def _check_release_schema(
     A future entry must not make an older package with a new migration pass.
     This is an explicit publishing check: development artifacts may qualify
     their runtime before the owner chooses the next release version. Release
-    artifacts must contain no unreleased revision or helper files.
+    artifacts must record the MCP tool contract they ship and contain no
+    unreleased migration or helper files.
     """
 
     try:
@@ -493,6 +525,33 @@ def _check_release_schema(
         *_check_release_identity(root, artifact, release_version, expected),
         *_check_schema_boundary(root, head, expected),
         *_check_unreleased_migrations(root),
+        *_check_unreleased_tool_contract(root, release_version),
+    ]
+
+
+def _check_unreleased_tool_contract(root: Path, release_version: str) -> list[str]:
+    """Require make set-version to record the packaged MCP tool contract."""
+
+    relative = "backend/schemas/common.py"
+    missing = f"{relative} does not state both MCP tool contract revisions exactly once"
+    try:
+        source = (root / relative).read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return [missing]
+
+    current = re.findall(r"^MCP_TOOL_CONTRACT_REVISION = (\d+)$", source, re.MULTILINE)
+    released = re.findall(
+        r"^MCP_RELEASED_TOOL_CONTRACT_REVISION = (\d+)$", source, re.MULTILINE
+    )
+    if len(current) != 1 or len(released) != 1:
+        return [missing]
+    if current == released:
+        return []
+    return [
+        f"release artifact contains unreleased MCP tool contract revision "
+        f"{current[0]} (last released {released[0]}). Run make set-version "
+        f"VERSION={release_version} on the release branch to record it before "
+        "publishing"
     ]
 
 
@@ -996,7 +1055,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--release-version",
         help=(
             "require artifact metadata and effective schema boundary to match "
-            "this tag version, with no unreleased migration or helper files"
+            "this tag version, with a recorded MCP tool contract and no "
+            "unreleased migration or helper files"
         ),
     )
     arguments = parser.parse_args(argv)

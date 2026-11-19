@@ -10,9 +10,7 @@ from uuid import UUID, uuid4
 import pygit2
 import sqlalchemy as sa
 
-from backend.migrations.revision_modules.unreleased._74e5d4f912a6_context_git import (
-    context_content_to_git as git,
-)
+from . import context_content_to_git as git
 
 _LOG = logging.getLogger(__name__)
 _FIELDS = ("title", "page_type", "tags", "aliases", "placement_parent_node_id")

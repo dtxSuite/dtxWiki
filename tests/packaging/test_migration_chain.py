@@ -36,7 +36,8 @@ RELEASE_013_REVISION = "19db79d3e622"
 RELEASE_014_REVISION = "eb86fdacb1bb"
 RELEASE_021_REVISION = "5b7e5c149279"
 RELEASE_023_REVISION = "00ba02774c4a"
-CURRENT_HEAD = "c3d2e4f601ab"
+RELEASE_031_REVISION = "c3d2e4f601ab"
+CURRENT_HEAD = RELEASE_031_REVISION
 ALEMBIC_REVISION_METADATA = {
     "revision",
     "down_revision",
@@ -111,13 +112,13 @@ def test_graph_preserves_released_boundaries_and_appends_current_head():
         RELEASE_013_REVISION: CORE_REVISION,
         RELEASE_014_REVISION: RELEASE_013_REVISION,
         RELEASE_021_REVISION: RELEASE_014_REVISION,
+        RELEASE_023_REVISION: RELEASE_021_REVISION,
+        RELEASE_031_REVISION: RELEASE_023_REVISION,
     }
     assert {
         revision: graph[revision] for revision in expected_prefix
     } == expected_prefix
-    assert graph[RELEASE_023_REVISION] == RELEASE_021_REVISION
-    # Future changes append after the single frozen 0.2 release migration.
-    appended = set(graph) - expected_prefix.keys()
+    appended = set(graph) - _revision_ancestors(graph, RELEASE_021_REVISION)
     assert initialization_graph == {
         RELEASE_021_REVISION: None,
         **{revision: graph[revision] for revision in appended},
@@ -125,10 +126,6 @@ def test_graph_preserves_released_boundaries_and_appends_current_head():
     assert _revision_ancestors(graph, CURRENT_HEAD) == set(graph)
     assert all(
         RELEASE_021_REVISION in _revision_ancestors(graph, revision)
-        for revision in appended
-    )
-    assert all(
-        Path(script.get_revision(revision).path).parent.name in {"v0_2", "unreleased"}
         for revision in appended
     )
     assert Path(script.get_revision(RELEASE_021_REVISION).path).parent.name == "v0_2"
@@ -140,6 +137,7 @@ def test_graph_preserves_released_boundaries_and_appends_current_head():
     assert manifest["schema_releases"]["0.1.4"]["head"] == RELEASE_014_REVISION
     assert manifest["schema_releases"]["0.2.1"]["head"] == RELEASE_021_REVISION
     assert manifest["schema_releases"]["0.2.3"]["head"] == RELEASE_023_REVISION
+    assert manifest["schema_releases"]["0.3.1"]["head"] == RELEASE_031_REVISION
     released_revisions: set[str] = set()
     for release, entry in manifest["schema_releases"].items():
         major, minor = release.split(".")[:2]
@@ -220,6 +218,11 @@ def test_the_freeze_covers_every_released_migration_file():
                 MIGRATIONS_DIR.parent
                 / "revision_modules/v0_2/_5b7e5c149279_release_0_2"
             ).glob("*.py")
+        ),
+        *(
+            path.relative_to(MIGRATIONS_DIR.parent).as_posix()
+            for group in ("versions/v0_3", "revision_modules/v0_3")
+            for path in (MIGRATIONS_DIR.parent / group).rglob("*.py")
         ),
     }
 
@@ -437,12 +440,12 @@ def test_generated_revisions_wait_for_release_and_link_in_order(tmp_path):
 
     # Assigning a release later changes the folders, never revision identities
     # or ancestry. Helper scaffolding follows the same eventual release group.
-    release_dir = target / "migrations/versions/v0_3"
+    release_dir = target / "migrations/versions/v0_4"
     release_dir.mkdir()
     for revision in (first, second):
         shutil.move(revision.path, release_dir / Path(revision.path).name)
     (target / "migrations/revision_modules/unreleased").rename(
-        target / "migrations/revision_modules/v0_3"
+        target / "migrations/revision_modules/v0_4"
     )
     released = ScriptDirectory(
         str(target / "migrations"), recursive_version_locations=True

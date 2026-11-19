@@ -1,6 +1,6 @@
 """The v0.2 release migration: two traversals per dialect, four collected cases.
 
-* Published 0.1.4 (eb86fdacb1bb) -> 0.2 -> 0.1.4 -> 0.2 on one populated
+* Published 0.1.4 (eb86fdacb1bb) -> 0.2 -> 0.1.4 -> head on one populated
   database: backfills, schema contracts, retained 0.1.4 login/deletion
   evidence, the parent stamp/schema guard, late-DDL rollback in both
   directions and the startup upgrade from 0.1.4. Those fault inputs and one
@@ -60,7 +60,6 @@ from backend.utils.content_hash import content_hash
 PARENT = "eb86fdacb1bb"
 REVISION = "5b7e5c149279"
 RELEASE_023_REVISION = "00ba02774c4a"
-REVERSIBLE_CONTEXT_REVISION = "872d9c3e104b"
 
 
 def _migration_engine(tmp_path, dialect, filename):
@@ -276,11 +275,8 @@ def test_release_02_upgrade_downgrade_reupgrade(tmp_path, dialect):
         _assert_release_upgrade(engine, release_data, now, first=True)
         _assert_labs_policy_upgrade(engine, config, workspace_id)
         _assert_archived_inbox_indexes(engine)
-        # Seed both historical locator projections at the last reversible
-        # schema. The shared-draft cutover is intentionally one-way; the release
-        # downgrade assertions below still execute their exact owning revisions.
-        command.upgrade(config, REVERSIBLE_CONTEXT_REVISION)
-        _assert_model_parity(engine)
+        # Seed both locator projections at the last reversible release schema
+        # to exercise the link-syntax downgrade in the revisions that own it.
         _seed_runtime_links(engine, release_data)
         command.downgrade(config, REVISION)
         assert "labs_policy" not in {
@@ -319,6 +315,7 @@ def test_release_02_upgrade_downgrade_reupgrade(tmp_path, dialect):
             assert all(count == 1 for count in counts.values()), counts
         assert _stamp(engine) == current_alembic_head()
         _assert_release_upgrade(engine, release_data, now, first=False)
+        _assert_model_parity(engine)
         _assert_labs_policy_upgrade(
             engine, config, workspace_id, upgrade=False, raw_default=True
         )

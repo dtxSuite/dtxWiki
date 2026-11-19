@@ -459,7 +459,7 @@ Cursor 이전 시각의 지연 열람이나 미처리 backlog는 요청 안에�
 
 현재 schema head는 release manifest에서 읽습니다. 이미 배포된 revision은 수정하지
 않습니다. 여러 브랜치의 후속 migration은 merge revision으로 연결하고 schema·model
-일치를 검사합니다. 0.2.1·0.2.3의 미배포 migration 통합과 개발 DB 전환은 아래 릴리스
+일치를 검사합니다. 0.2.1·0.2.3·0.3.1의 미배포 migration 통합과 개발 DB 전환은 아래 릴리스
 migration 안내를 따릅니다.
 
 ## 설치 방식별 업데이트 방법
@@ -697,6 +697,22 @@ CHANGELOG의 과거 릴리스, 운영 증거, DB schema 경계와 백업의 당�
 않습니다. DB 변경은 아래의 `unreleased` 절차를 따릅니다. 이 명령은 Git 태그 생성, push,
 registry 게시를 수행하지 않습니다.
 
+### MCP tool contract revision
+
+클라이언트가 관찰할 수 있는 MCP tool 계약이 바뀐 릴리스는 직전 배포본의
+`MCP_TOOL_CONTRACT_REVISION`에서 1을 올립니다. 계약이 그대로면 번호를 유지합니다.
+다음 릴리스까지의 변경은 같은 revision의 이력, digest, CHANGELOG 안내에 합칩니다.
+이미 배포된 revision과 digest는 보존합니다.
+
+`make set-version`은 같은 앱 버전으로 다시 실행해도 현재 revision을
+`MCP_RELEASED_TOOL_CONTRACT_REVISION`에 기록합니다. `make sync-version`은 생성물을
+갱신할 때 사용합니다. 태그 전에 계약을 더 바꿨다면 직전 배포본과 비교합니다.
+기록된 revision을 직전 배포본이 이미 사용했다면 1을 올립니다. 이번 릴리스에서 처음
+기록한 번호라면 해당 revision의 이력과 digest를 갱신합니다. 그 뒤
+`make set-version`을 다시 실행합니다.
+
+### 릴리스 migration 확정
+
 릴리스 브랜치에서는 다음 순서로 배포할 migration을 확정합니다.
 
 1. `make set-version VERSION=X.Y.Z`로 배포할 앱 버전을 정합니다.
@@ -780,7 +796,8 @@ metadata를 실행하지 않습니다. 비어 있음이 증명된 DB에서만 �
 ```text
 bd62193d5cf6 (0.0.1) → efcbcf724889 (0.1.1·0.1.2) → 19db79d3e622 (0.1.3)
   → eb86fdacb1bb (0.1.4) → 5b7e5c149279 (0.2.1·0.2.2)
-  → 00ba02774c4a (0.2.3)
+  → 00ba02774c4a (0.2.3·0.2.4)
+  → c3d2e4f601ab (0.3.1)
 ```
 
 `versions/v0_1/eb86fdacb1bb_release_0_1_4.py`는 v0.1.4 태그의 파일과 같습니다.
@@ -806,6 +823,14 @@ migration만 적용합니다. 배포된 0.2.2 경계와 그 이전 고정 파일
 원래 checkout으로 `00ba02774c4a`에 도달하고 백업·검증한 뒤 전환합니다.
 제거된 미배포·개발 revision의 DB는 원래 checkout으로 먼저 최종 head에 도달하고,
 백업과 schema 검증을 마친 뒤 전환합니다. 임의로 stamp를 바꾸지 않습니다.
+
+0.3.1은 미배포 변경을 `v0_3/c3d2e4f601ab_release_0_3_1.py` 하나로 통합합니다.
+0.2.3·0.2.4 DB는 `00ba02774c4a`에서 직접 이 revision을 적용합니다.
+통합 전 개발 DB의 중간 revision `74e5d4f912a6`, `9d8695419436`,
+`872d9c3e104b`, `e4f7a2c901bd`는 제거했습니다. 이 상태의 DB는 해당 개발
+checkout에서 `c3d2e4f601ab`까지 업그레이드하고 백업·검증한 뒤 전환합니다.
+이미 `c3d2e4f601ab`에 도달한 DB는 같은 revision을 유지합니다.
+공유 초안 변환 후 롤백은 업그레이드 전 백업을 복원합니다.
 
 지원되는 업그레이드 시작점은 최소 v0.1.2부터 유지합니다. v0.1.2의
 `efcbcf724889`, v0.1.3의 `19db79d3e622`, v0.1.4의 `eb86fdacb1bb`에서 현재 head로

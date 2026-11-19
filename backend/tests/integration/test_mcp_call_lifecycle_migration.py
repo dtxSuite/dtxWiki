@@ -11,14 +11,17 @@ from alembic.config import Config
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backend.app.bootstrap import resolve_alembic_ini, resolve_migrations_dir
+from backend.app.bootstrap import resolve_alembic_ini
 from backend.models.mcp_trace import MCPToolCall, MCPWriteIdempotency
 from backend.models.workspace import MCPClient
 from backend.scripts.seed_dev import seed_default_workspace
+from backend.tests.utils.context_migration_phases import (
+    HISTORICAL_BODIES,
+    MCP_CALL_LIFECYCLE,
+    configure_context_migration_phases,
+)
 from backend.tests.utils.postgres import drop_reflected_postgres_metadata
 
-PARENT = "9d8695419436"
-REVISION = "872d9c3e104b"
 LIFECYCLE_COLUMNS = {
     "actor_kind",
     "actor_id",
@@ -58,13 +61,13 @@ def test_mcp_call_lifecycle_upgrade_downgrade_reupgrade(tmp_path, dialect):
     engine = sa.create_engine(url)
     assert not (set(sa.inspect(engine).get_table_names()) - {"alembic_version"})
     config = Config(str(resolve_alembic_ini()))
-    config.set_main_option("script_location", str(resolve_migrations_dir()))
+    configure_context_migration_phases(config, tmp_path)
     config.set_main_option("sqlalchemy.url", url)
     config.attributes["context_repositories_root"] = tmp_path / "repositories"
     now = datetime(2026, 11, 10, 10, 0, tzinfo=UTC)
     receipt_id, historical_call_id, historical_request_id = uuid4(), uuid4(), uuid4()
     try:
-        command.upgrade(config, PARENT)
+        command.upgrade(config, HISTORICAL_BODIES)
         original_tables = set(sa.inspect(engine).get_table_names())
         original_indexes = {
             index["name"] for index in sa.inspect(engine).get_indexes("mcp_tool_call")
@@ -122,7 +125,7 @@ def test_mcp_call_lifecycle_upgrade_downgrade_reupgrade(tmp_path, dialect):
             )
             session.commit()
 
-        command.upgrade(config, REVISION)
+        command.upgrade(config, MCP_CALL_LIFECYCLE)
         engine.dispose()
         inspector = sa.inspect(engine)
         assert set(inspector.get_table_names()) == original_tables
@@ -201,7 +204,7 @@ def test_mcp_call_lifecycle_upgrade_downgrade_reupgrade(tmp_path, dialect):
             assert session.get(MCPToolCall, call.id).retryable is False
             lifecycle_call_id = call.id
 
-        command.downgrade(config, PARENT)
+        command.downgrade(config, HISTORICAL_BODIES)
         engine.dispose()
         inspector = sa.inspect(engine)
         assert set(inspector.get_table_names()) == original_tables
@@ -227,7 +230,7 @@ def test_mcp_call_lifecycle_upgrade_downgrade_reupgrade(tmp_path, dialect):
                 "saved": True
             }
 
-        command.upgrade(config, REVISION)
+        command.upgrade(config, MCP_CALL_LIFECYCLE)
         with Session(engine) as session:
             assert (
                 session.scalar(sa.select(sa.func.count()).select_from(MCPToolCall)) == 3

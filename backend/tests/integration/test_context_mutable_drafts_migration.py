@@ -1,4 +1,4 @@
-"""One populated draft-conversion traversal per supported dialect."""
+"""One populated 0.3.1 release upgrade per supported dialect."""
 
 import os
 from datetime import UTC, datetime, timedelta
@@ -23,7 +23,7 @@ from backend.services.review_service import ReviewService
 from backend.tests.utils.postgres import drop_reflected_postgres_metadata
 from backend.utils.content_hash import content_hash
 
-PARENT = "e4f7a2c901bd"
+PARENT = "00ba02774c4a"
 REVISION = "c3d2e4f601ab"
 
 
@@ -78,15 +78,6 @@ def test_mutable_draft_conversion_traversal(tmp_path, dialect):
             )
         )
         store = GitSnapshotStore(root)
-        published_oid = store.commit(
-            workspace_id=workspace_id,
-            page_id=page_id,
-            version_id=published_id,
-            created_at=now,
-            payload=ContentPayload(b"# Published\n", block_map=block_map),
-            parents=[],
-        )
-        store.set_head(workspace_id, page_id, published_oid)
         with engine.begin() as connection:
             connection.execute(
                 pages.insert().values(
@@ -164,8 +155,6 @@ def test_mutable_draft_conversion_traversal(tmp_path, dialect):
                         version_status=status,
                         body_md=body,
                         content_hash=content_hash(body),
-                        content_byte_size=len(body.encode()) if number == 1 else None,
-                        commit_oid=published_oid if number == 1 else None,
                         graph_status="linear",
                         actor_type="human",
                         actor_id=key(actor_id),
@@ -306,8 +295,7 @@ def test_mutable_draft_conversion_traversal(tmp_path, dialect):
                     latest_draft_version_id=key(shared_id),
                 )
             )
-        # The locator revision is already complete before this draft cutover.
-        # Only retirement of the old draft reminder jobs belongs here.
+        # The released parent can have old draft reminder jobs in flight.
         with Session(engine) as session:
             session.add_all(
                 Job(
@@ -328,7 +316,17 @@ def test_mutable_draft_conversion_traversal(tmp_path, dialect):
                 UUID(str(row["id"])): row
                 for row in connection.execute(sa.select(table)).mappings()
             }
-            assert rows[published_id]["commit_oid"] == published_oid
+            published_oid = rows[published_id]["commit_oid"]
+            assert published_oid is not None
+            assert (
+                store.read(
+                    workspace_id=workspace_id,
+                    page_id=page_id,
+                    commit_oid=published_oid,
+                    descriptor=ContentPayload(b"").descriptor,
+                )
+                == b"# Published\n"
+            )
             assert (
                 rows[editing_id]["version_status"]
                 == rows[shared_id]["version_status"]

@@ -3,6 +3,8 @@
 Only the project's own lock entries change; dependency resolutions and schema
 release boundaries are deliberately preserved. README files remain directly
 editable: only recognizable references to the current app release are changed.
+Setting a version, even the current one, also records the current MCP tool
+contract revision as the released one; sync never does.
 """
 
 from __future__ import annotations
@@ -23,6 +25,11 @@ JSON_MANIFESTS = (
     "integrations/codex-plugin/plugins/dtxwiki/.codex-plugin/plugin.json",
 )
 OPENAPI = "shared/schemas/rest/v1/openapi.json"
+TOOL_CONTRACT = "backend/schemas/common.py"
+_TOOL_CONTRACT_REVISION = re.compile(r"^MCP_TOOL_CONTRACT_REVISION = (\d+)$", re.M)
+_RELEASED_TOOL_CONTRACT_REVISION = re.compile(
+    r"^MCP_RELEASED_TOOL_CONTRACT_REVISION = \d+$", re.M
+)
 README_PATHS = ("README.md", "README.ko.md", "npm/dtxwiki/README.md")
 _README_VERSION = r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+)"
 _README_PATTERNS = tuple(
@@ -180,12 +187,32 @@ def export_openapi(root: Path) -> dict:
     return json.loads(process.stdout)
 
 
+def _released_tool_contract_text(root: Path) -> str:
+    """Record the current MCP tool contract revision as the released one."""
+
+    text = (root / TOOL_CONTRACT).read_text(encoding="utf-8")
+    current = _TOOL_CONTRACT_REVISION.search(text)
+    released = _RELEASED_TOOL_CONTRACT_REVISION.search(text)
+    if current is None or released is None:
+        raise ValueError(f"{TOOL_CONTRACT}: MCP tool contract revisions not found")
+    return (
+        text[: released.start()]
+        + f"MCP_RELEASED_TOOL_CONTRACT_REVISION = {current[1]}"
+        + text[released.end() :]
+    )
+
+
 def synchronize(root: Path = ROOT, version: str | None = None) -> list[str]:
     current = source_version(root)
     target = _validate_version(version) if version is not None else current
     # Prepare every output before writing anything: malformed input, missing
     # README files or a broken exporter must not leave a half-updated release.
     outputs = {"pyproject.toml": _project_text(root, target)}
+    if version is not None:
+        # An explicit set releases the MCP tool contract revision, including a
+        # rerun with the same version after a late change before the tag.
+        # Regenerating the current version (sync) must not release it.
+        outputs[TOOL_CONTRACT] = _released_tool_contract_text(root)
     for path in JSON_MANIFESTS:
         manifest = _json(root, path)
         manifest["version"] = target

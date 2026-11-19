@@ -305,7 +305,7 @@ def test_verifier_accepts_a_complete_dist(tmp_path):
         assert (
             f"{name}: alembic head {CURRENT_HEAD}, "
             f"{REVISION_MODULES} packaged core revision modules, "
-            "33 frozen migration files intact, "
+            "43 frozen migration files intact, "
             "frontend bundle intact"
         ) in result.stdout
 
