@@ -459,8 +459,8 @@ Cursor 이전 시각의 지연 열람이나 미처리 backlog는 요청 안에�
 
 현재 schema head는 release manifest에서 읽습니다. 이미 배포된 revision은 수정하지
 않습니다. 여러 브랜치의 후속 migration은 merge revision으로 연결하고 schema·model
-일치를 검사합니다. 0.2.1·0.2.3·0.3.1의 미배포 migration 통합과 개발 DB 전환은 아래 릴리스
-migration 안내를 따릅니다.
+일치를 검사합니다. 0.2.1·0.2.3·0.3.1의 미배포 migration 통합과 0.2.1·0.2.3의 개발 DB
+전환은 아래 릴리스 migration 안내를 따릅니다.
 
 ## 설치 방식별 업데이트 방법
 
@@ -704,8 +704,9 @@ registry 게시를 수행하지 않습니다.
 다음 릴리스까지의 변경은 같은 revision의 이력, digest, CHANGELOG 안내에 합칩니다.
 이미 배포된 revision과 digest는 보존합니다.
 
-`make set-version`은 같은 앱 버전으로 다시 실행해도 현재 revision을
-`MCP_RELEASED_TOOL_CONTRACT_REVISION`에 기록합니다. `make sync-version`은 생성물을
+`make set-version`은 같은 앱 버전으로 다시 실행해도 현재 revision과 tool 계약
+digest를 `MCP_RELEASED_TOOL_CONTRACT_REVISION`과
+`MCP_RELEASED_TOOL_CONTRACT_DIGEST`에 기록합니다. `make sync-version`은 생성물을
 갱신할 때 사용합니다. 태그 전에 계약을 더 바꿨다면 직전 배포본과 비교합니다.
 기록된 revision을 직전 배포본이 이미 사용했다면 1을 올립니다. 이번 릴리스에서 처음
 기록한 번호라면 해당 revision의 이력과 digest를 갱신합니다. 그 뒤
@@ -826,10 +827,6 @@ migration만 적용합니다. 배포된 0.2.2 경계와 그 이전 고정 파일
 
 0.3.1은 미배포 변경을 `v0_3/c3d2e4f601ab_release_0_3_1.py` 하나로 통합합니다.
 0.2.3·0.2.4 DB는 `00ba02774c4a`에서 직접 이 revision을 적용합니다.
-통합 전 개발 DB의 중간 revision `74e5d4f912a6`, `9d8695419436`,
-`872d9c3e104b`, `e4f7a2c901bd`는 제거했습니다. 이 상태의 DB는 해당 개발
-checkout에서 `c3d2e4f601ab`까지 업그레이드하고 백업·검증한 뒤 전환합니다.
-이미 `c3d2e4f601ab`에 도달한 DB는 같은 revision을 유지합니다.
 공유 초안 변환 후 롤백은 업그레이드 전 백업을 복원합니다.
 
 지원되는 업그레이드 시작점은 최소 v0.1.2부터 유지합니다. v0.1.2의

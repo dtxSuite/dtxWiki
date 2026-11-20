@@ -4,7 +4,7 @@ Only the project's own lock entries change; dependency resolutions and schema
 release boundaries are deliberately preserved. README files remain directly
 editable: only recognizable references to the current app release are changed.
 Setting a version, even the current one, also records the current MCP tool
-contract revision as the released one; sync never does.
+contract revision and digest as the released ones; sync never does.
 """
 
 from __future__ import annotations
@@ -29,6 +29,9 @@ TOOL_CONTRACT = "backend/schemas/common.py"
 _TOOL_CONTRACT_REVISION = re.compile(r"^MCP_TOOL_CONTRACT_REVISION = (\d+)$", re.M)
 _RELEASED_TOOL_CONTRACT_REVISION = re.compile(
     r"^MCP_RELEASED_TOOL_CONTRACT_REVISION = \d+$", re.M
+)
+_RELEASED_TOOL_CONTRACT_DIGEST = re.compile(
+    r'^MCP_RELEASED_TOOL_CONTRACT_DIGEST = "[0-9a-f]*"$', re.M
 )
 README_PATHS = ("README.md", "README.ko.md", "npm/dtxwiki/README.md")
 _README_VERSION = r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+)"
@@ -187,18 +190,41 @@ def export_openapi(root: Path) -> dict:
     return json.loads(process.stdout)
 
 
-def _released_tool_contract_text(root: Path) -> str:
-    """Record the current MCP tool contract revision as the released one."""
+def tool_contract_digest(root: Path) -> str:
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from backend.mcp.protocol.tool_descriptors import tool_contract_digest;"
+            "print(tool_contract_digest())",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    digest = process.stdout.strip()
+    if process.returncode or not re.fullmatch(r"[0-9a-f]{12}", digest):
+        raise ValueError(f"MCP tool contract digest failed:\n{process.stderr[-2000:]}")
+    return digest
+
+
+def _released_tool_contract_text(root: Path, digest: str) -> str:
+    """Record the current MCP tool contract revision and digest as released."""
 
     text = (root / TOOL_CONTRACT).read_text(encoding="utf-8")
-    current = _TOOL_CONTRACT_REVISION.search(text)
-    released = _RELEASED_TOOL_CONTRACT_REVISION.search(text)
-    if current is None or released is None:
-        raise ValueError(f"{TOOL_CONTRACT}: MCP tool contract revisions not found")
-    return (
-        text[: released.start()]
-        + f"MCP_RELEASED_TOOL_CONTRACT_REVISION = {current[1]}"
-        + text[released.end() :]
+    current = _TOOL_CONTRACT_REVISION.findall(text)
+    if (
+        len(current) != 1
+        or len(_RELEASED_TOOL_CONTRACT_REVISION.findall(text)) != 1
+        or len(_RELEASED_TOOL_CONTRACT_DIGEST.findall(text)) != 1
+    ):
+        raise ValueError(f"{TOOL_CONTRACT}: released MCP tool contract not found")
+    text = _RELEASED_TOOL_CONTRACT_REVISION.sub(
+        f"MCP_RELEASED_TOOL_CONTRACT_REVISION = {current[0]}", text
+    )
+    return _RELEASED_TOOL_CONTRACT_DIGEST.sub(
+        f'MCP_RELEASED_TOOL_CONTRACT_DIGEST = "{digest}"', text
     )
 
 
@@ -212,7 +238,9 @@ def synchronize(root: Path = ROOT, version: str | None = None) -> list[str]:
         # An explicit set releases the MCP tool contract revision, including a
         # rerun with the same version after a late change before the tag.
         # Regenerating the current version (sync) must not release it.
-        outputs[TOOL_CONTRACT] = _released_tool_contract_text(root)
+        outputs[TOOL_CONTRACT] = _released_tool_contract_text(
+            root, tool_contract_digest(root)
+        )
     for path in JSON_MANIFESTS:
         manifest = _json(root, path)
         manifest["version"] = target

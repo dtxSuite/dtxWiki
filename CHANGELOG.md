@@ -15,17 +15,37 @@
   pre-upgrade backup with the previous dtxWiki version.
 - Context drafts are shared and readable by workspace Editors and Owners.
   Viewers and public visitors continue to read published content.
+- Page bodies no longer resolve `/context/<name>.md` or `/pages/<slug>` links.
+  They stay in the body as unavailable links with unresolved-link findings and
+  no longer count as backlinks or graph relations. Short `/p/<page_id>` links
+  expand to `/p/<workspace_id>/<page_id>` on save.
 - MCP tool contract revision 30 follows revision 29 of 0.2.4. Refresh cached
   `tools/list` results and result schemas before updating clients.
   - `submit_revision_for_review`, `retry_only`, the partial-read `target`,
     `concept_path`, `/context/<name>.md` page inputs, and the Context update
     fields `base_version_id` and `base_content_hash` are removed.
   - Address Context drafts by `version_id` and editing revision. Include the
-    required `idempotency_key` with Context and Agent writes. Recover a lost
-    write result with `get_operation_status` and the original key.
-  - Address documents by kind and UUID or by their returned `stable_url`.
-    Search results carry `version_status` and `draft`. Use `version_id` to
-    read the exact version that matched.
+    required `idempotency_key` with Context page, edit, merge and citation
+    writes and with `write_agent_page_draft`. Recover a lost write result with
+    `get_operation_status` and the original key.
+  - Address documents by kind and UUID or by their returned `stable_url`, and
+    link them with the returned `link_markdown`. Search results carry
+    `version_status` and `draft`. Pass a hit's `version_id` to
+    `read_context_outline` or `read_structure_map` to read the exact version
+    that matched.
+  - Partial reads take a top-level `page_id` and an optional `version_id`.
+    Uploads and Context updates take `version_id`, and updates place a page
+    with `placement_parent_node_id`. Context write results return `page_id`,
+    and structure maps return `content_hash`.
+  - Context reads label unpublished bodies with `draft` and list open drafts in
+    `open_drafts`; cursor continuations omit it. Page through a page's open
+    drafts with the read-only `list_context_drafts` tool.
+  - `read_concept` takes a Context page UUID or `/p/` URL, an exact Context or
+    Library `get_index` ref, or a canonical Library item URL in place of
+    `/library/<id>.md`. A Context path returns `validation_failed`, and
+    `redirected`, `ambiguous` and `candidates` are no longer returned.
+  - OKF bundle keys, index links and `dtxwiki:file` separators use canonical
+    Context and Library URLs.
   - Save the whole body when `begin_context_edit` reports `block_map_stale`.
     Use `actor_context.my_writes_wait_for_human_review` in place of
     `actor_context.my_writes_stage_as_drafts`.
@@ -69,6 +89,8 @@
   - A client that registers no scope, or an empty one, may request every
     offered scope. Consent, the allowed workspaces and the account's workspace
     role still decide what it can do.
+  - Loopback redirect registrations may omit the port, and an unauthenticated
+    `HEAD /mcp` returns the same 401 challenge as other `/mcp` requests.
 - **graph**: improve local graph list readability ([#124](https://github.com/dtxSuite/dtxWiki/pull/124))
 - **graph**: clarify edge rendering and legend cues ([#122](https://github.com/dtxSuite/dtxWiki/pull/122))
 - **migrations**: restore released upgrades and direct initialization ([#118](https://github.com/dtxSuite/dtxWiki/pull/118))
@@ -97,6 +119,9 @@
 - Refactor context version Git integration ([#111](https://github.com/dtxSuite/dtxWiki/pull/111))
   - Adds `dtxwiki backup`, which creates the verified SQLite checkpoint
     without upgrading.
+  - A rollback that dtxWiki performs shows the backup path, its creation time
+    and the version change, and warns that writes since the backup will be
+    lost, including with `--dry-run` and `--yes`.
 - Improve context edit page header ([#109](https://github.com/dtxSuite/dtxWiki/pull/109))
 - Refactor workspace graph physics integration ([#110](https://github.com/dtxSuite/dtxWiki/pull/110))
 

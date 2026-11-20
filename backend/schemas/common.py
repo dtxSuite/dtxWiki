@@ -258,10 +258,12 @@ REST_SCHEMA_VERSION = "llmwiki.rest.v1"
 #        revision, published head and result hash; commit_version_id enables
 #        bring-in previews. Register context_merge_conflict and
 #        human_approval_required. Refresh cached tool catalogs and schemas.
-# The revision the latest release shipped. `make set-version` records the
-# current revision here; release verification rejects an artifact whose
-# MCP_TOOL_CONTRACT_REVISION is not recorded.
+# The revision the latest release shipped and its tool contract digest.
+# `make set-version` records the current revision and live digest here; release
+# verification rejects an artifact whose MCP_TOOL_CONTRACT_REVISION is not
+# recorded.
 MCP_RELEASED_TOOL_CONTRACT_REVISION = 30
+MCP_RELEASED_TOOL_CONTRACT_DIGEST = "7f825bd114a8"
 MCP_TOOL_CONTRACT_REVISION = 30
 # Marks a field whose null means "unknown" on the MCP wire. Fields at their
 # declared default are left off the wire (backend/mcp/protocol/wire_defaults.py);

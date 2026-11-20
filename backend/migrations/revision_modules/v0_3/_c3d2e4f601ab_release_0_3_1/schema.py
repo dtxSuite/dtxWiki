@@ -9,7 +9,6 @@ from . import (
     context_drafts,
     context_git_bodies,
     document_identity,
-    document_locator_rollback,
 )
 
 
@@ -37,7 +36,7 @@ def add_context_git_snapshots() -> None:
 def release_historical_context_bodies() -> None:
     root = context_git_bodies.repository_root(op.get_context().config.attributes)
     connection = op.get_bind()
-    context_git_bodies.verify(connection, root, require_database_bodies=True)
+    context_git_bodies.verify(connection, root)
     with op.batch_alter_table("context_page_version") as batch:
         batch.alter_column("body_md", existing_type=sa.Text(), nullable=True)
         # Existing bodies already satisfy this CHECK. Install it with the
@@ -75,28 +74,10 @@ def track_mcp_call_lifecycle() -> None:
 
 
 def convert_document_identity() -> None:
-    op.create_table(
-        "document_locator_rollback",
-        sa.Column(
-            "workspace_id",
-            sa.Uuid(),
-            sa.ForeignKey("workspace.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-        sa.Column("table_name", sa.Text(), nullable=False),
-        sa.Column("record_id", sa.Text(), nullable=False),
-        sa.Column("operation", sa.Text(), nullable=False),
-        sa.Column("deltas", sa.JSON(), nullable=False),
-        sa.Column("row_state", sa.JSON(), nullable=True),
-        sa.Column("identity_guard", sa.JSON(), nullable=False),
-        sa.Column("text_format", sa.JSON(), nullable=True),
-        sa.PrimaryKeyConstraint("workspace_id", "table_name", "record_id"),
-        sa.CheckConstraint(
-            "operation IN ('update', 'insert', 'delete')",
-            name="document_locator_rollback_operation_check",
-        ),
-    )
-    document_locator_rollback.convert(op.get_bind(), document_identity)
+    connection = op.get_bind()
+    document_identity.convert_locators(connection)
+    document_identity.convert_command_receipts(connection)
+    document_identity.enqueue_reindex(connection)
 
 
 def convert_context_drafts() -> None:

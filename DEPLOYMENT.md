@@ -820,7 +820,7 @@ npx는 같은 npm 대상 버전을 지정하여 릴리스에서 요구하는 사
 사용하고 필요한 복구·migration은 상세 문서의 순서를 따르세요.
 
 화면의 안내는 설치·마이그레이션·복구 전체 절차를 대신하지 않습니다.
-[상세 유지보수 문서](https://docs.dtxwiki.com/docs/0.2/administration/backup-upgrades/)와
+[상세 유지보수 문서](https://docs.dtxwiki.com/docs/0.3/administration/backup-upgrades/)와
 [릴리스 변경 내역](https://github.com/dtxSuite/dtxWiki/releases)을 확인하고,
 실행 중인 서버와 별도로 관리하는 worker를 모두 중지한 뒤 DB·파일·설정을 백업하세요.
 

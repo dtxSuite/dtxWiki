@@ -180,22 +180,19 @@ FROZEN_MIGRATIONS = {
         "0d22f950079562390653f53a2247d9e6bf7189a00146942056e5ae38f938ea79"
     ),
     "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_content_to_git.py": (
-        "1554dc9e8054ff5fd54809203597ecdff5f5da157e481664340e9b6d0d33f85b"
+        "b62d940d764174cbb7f8de85688b7126b1b70bbe4023cf4075bca938e309f890"
     ),
     "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_drafts.py": (
-        "5f4ce84b20c1be5339c26ce38656ab00d3d8d9964647e701bc96108c6c26620c"
+        "6f9e0cf4dc64afb0867a20a469e8b0ced76e267a33ce9fd570df12028516dac3"
     ),
     "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_git_bodies.py": (
-        "3d1d7b1da3142c2af8c2bcc2d90456b0aaa6fb99ff48e5aad2d14ec1f8f2ec45"
+        "464478ec006b14b1a8cde7be7a7353eeb0a2282d52df080db847af16db24a7e5"
     ),
     "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/document_identity.py": (
-        "f91c7602e69dfdc5e28ba6eb8d84a0e53b453ade21ecee5f93e23886ace19641"
-    ),
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/document_locator_rollback.py": (
-        "84f60ebcd7dae8dc5b158a8ce31ca1b1ce040712fb82ca8fe09531c2b62114d2"
+        "c361b115f31a5aa6a0f85662dec3f4aeaaeb2e742a90b277e0bb8dedb55bffa0"
     ),
     "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/schema.py": (
-        "ae1528e1f66ca2727bba0302df998cc55ca1dd42c7f01abd9b53ccfc6a740409"
+        "cf41b3830b698f6758d4e99132486fabff828f291135f143c0c555df86542920"
     ),
     "versions/v0_0/bd62193d5cf6_initial_schema.py": (
         "1c944d1f3c1d5427ff40470aacf1fbf611092a8e7e1111f19bc4089d13bd45e8"

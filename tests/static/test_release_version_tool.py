@@ -138,7 +138,9 @@ def release_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _write(
         tmp_path,
         "backend/schemas/common.py",
-        "MCP_RELEASED_TOOL_CONTRACT_REVISION = 7\nMCP_TOOL_CONTRACT_REVISION = 8\n",
+        "MCP_RELEASED_TOOL_CONTRACT_REVISION = 7\n"
+        'MCP_RELEASED_TOOL_CONTRACT_DIGEST = "70000000000a"\n'
+        "MCP_TOOL_CONTRACT_REVISION = 8\n",
     )
     _write(tmp_path, "CHANGELOG.md", "## 0.1.4\n\nReleased before 1.2.3.\n")
     _write(
@@ -148,6 +150,9 @@ def release_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     )
     monkeypatch.setattr(
         release_version, "export_openapi", lambda root: _json(root, OPENAPI)
+    )
+    monkeypatch.setattr(
+        release_version, "tool_contract_digest", lambda root: "80000000000b"
     )
     return tmp_path
 
@@ -204,14 +209,18 @@ def test_version_sync_updates_consumers_without_rewriting_history_or_dependencie
     contract = release_tree / "backend/schemas/common.py"
     # The upversion releases the revision accumulated since the last release.
     assert contract.read_text() == (
-        "MCP_RELEASED_TOOL_CONTRACT_REVISION = 8\nMCP_TOOL_CONTRACT_REVISION = 8\n"
+        "MCP_RELEASED_TOOL_CONTRACT_REVISION = 8\n"
+        'MCP_RELEASED_TOOL_CONTRACT_DIGEST = "80000000000b"\n'
+        "MCP_TOOL_CONTRACT_REVISION = 8\n"
     )
     assert release_version.check(root=release_tree) == []
 
     # A later contract change stays unreleased: regenerating the same version
     # must not record it, or the next release would need a second revision.
     contract.write_text(
-        "MCP_RELEASED_TOOL_CONTRACT_REVISION = 8\nMCP_TOOL_CONTRACT_REVISION = 9\n"
+        "MCP_RELEASED_TOOL_CONTRACT_REVISION = 8\n"
+        'MCP_RELEASED_TOOL_CONTRACT_DIGEST = "80000000000b"\n'
+        "MCP_TOOL_CONTRACT_REVISION = 9\n"
     )
     after = _snapshot(release_tree)
     assert release_version.synchronize(root=release_tree) == []
@@ -223,7 +232,9 @@ def test_version_sync_updates_consumers_without_rewriting_history_or_dependencie
         "backend/schemas/common.py"
     ]
     assert contract.read_text() == (
-        "MCP_RELEASED_TOOL_CONTRACT_REVISION = 9\nMCP_TOOL_CONTRACT_REVISION = 9\n"
+        "MCP_RELEASED_TOOL_CONTRACT_REVISION = 9\n"
+        'MCP_RELEASED_TOOL_CONTRACT_DIGEST = "80000000000b"\n'
+        "MCP_TOOL_CONTRACT_REVISION = 9\n"
     )
 
 

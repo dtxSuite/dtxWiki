@@ -329,7 +329,11 @@ def convert(connection, attributes):
                         commit_oid=row["commit_oid"],
                         content_byte_size=row["content_byte_size"],
                         body_md=row["body_md"],
-                        block_map=row["block_map"],
+                        # Reflected JSON does not preserve none_as_null=True;
+                        # keep an absent map SQL NULL rather than JSON null.
+                        block_map=sa.null()
+                        if row["block_map"] is None
+                        else row["block_map"],
                     )
                 )
         finally:

@@ -237,7 +237,7 @@ sudo bash install-dtxwiki.sh \
 별도 systemd 서비스로 실행합니다([실행 모드](#run-modes) 참고). worker를 수동으로
 추가 실행하지 마세요. 사설 인증서, 기존 프록시,
 사설 패키지 인덱스 설정은
-[배포 안내](https://docs.dtxwiki.com/ko/docs/0.2/administration/deployment/)를 참고하세요.
+[배포 안내](https://docs.dtxwiki.com/ko/docs/0.3/administration/deployment/)를 참고하세요.
 
 ### 4. 백그라운드 실행
 
@@ -419,7 +419,7 @@ Context 변경은 검토할 초안으로 준비됩니다.
 **설정 > MCP 접근**에서 변경할 수 있습니다. 권한 규칙은
 [배포 안내의 MCP 워크스페이스 접근](https://github.com/dtxSuite/dtxWiki/blob/v0.3.1/DEPLOYMENT.md#mcp-workspace-access)을 참고하세요.
 다른 클라이언트와 OAuth 호환성은
-[AI 앱 연결 안내](https://docs.dtxwiki.com/ko/docs/0.2/integrations/mcp-connections/)를 참고하세요.
+[AI 앱 연결 안내](https://docs.dtxwiki.com/ko/docs/0.3/integrations/mcp-connections/)를 참고하세요.
 
 <a id="run-modes"></a>
 
@@ -461,7 +461,7 @@ dtxWiki의 실행 방식은 두 설정으로 정해집니다. 위 설치 방법�
 
 ## 0.3.1로 업데이트하기
 
-systemd나 Docker 설치는 [백업과 유지보수](https://docs.dtxwiki.com/ko/docs/0.2/administration/backup-upgrades/)의
+systemd나 Docker 설치는 [백업과 유지보수](https://docs.dtxwiki.com/ko/docs/0.3/administration/backup-upgrades/)의
 배포 방식별 업데이트 절차를 따르세요. 로컬 설치는
 [변경 내역](https://github.com/dtxSuite/dtxWiki/blob/v0.3.1/CHANGELOG.md)을 읽고
 서버와 별도로 실행한 모든 worker를 중지한 뒤 DB·Library 파일·Context
@@ -519,10 +519,10 @@ systemd updater는 자동으로 설정하며 Docker 이미지는 이미 `externa
 
 | 필요한 작업 | 안내 |
 | --- | --- |
-| SMTP·이메일 인증·복구 메일 | [이메일과 SMTP](https://docs.dtxwiki.com/ko/docs/0.2/administration/email-smtp/) |
-| 비밀번호 복구·워크스페이스 접근 | [계정과 워크스페이스 접근](https://docs.dtxwiki.com/ko/docs/0.2/administration/members-access/) |
-| 백업·업데이트·데이터 복원 | [백업과 유지보수](https://docs.dtxwiki.com/ko/docs/0.2/administration/backup-upgrades/) |
-| 실행·연결 문제 | [문제 해결](https://docs.dtxwiki.com/ko/docs/0.2/administration/troubleshooting/) |
+| SMTP·이메일 인증·복구 메일 | [이메일과 SMTP](https://docs.dtxwiki.com/ko/docs/0.3/administration/email-smtp/) |
+| 비밀번호 복구·워크스페이스 접근 | [계정과 워크스페이스 접근](https://docs.dtxwiki.com/ko/docs/0.3/administration/members-access/) |
+| 백업·업데이트·데이터 복원 | [백업과 유지보수](https://docs.dtxwiki.com/ko/docs/0.3/administration/backup-upgrades/) |
+| 실행·연결 문제 | [문제 해결](https://docs.dtxwiki.com/ko/docs/0.3/administration/troubleshooting/) |
 
 더 많은 활용 방법은 [전체 사용 안내](https://docs.dtxwiki.com/ko/)에서 확인할 수 있습니다.
 

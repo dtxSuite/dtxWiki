@@ -47,12 +47,11 @@
     "revision_modules/v0_3/__init__.py": "222e69501eea4aa437e0bd13de09ed6d7af13c41cbcf058f7b666b0eff109ddf",
     "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/__init__.py": "680012cb282a4f0c0e8475795e04f2e4111a4c8b608597a82f506baf46e372d9",
     "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/active_block_maps.py": "0d22f950079562390653f53a2247d9e6bf7189a00146942056e5ae38f938ea79",
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_content_to_git.py": "1554dc9e8054ff5fd54809203597ecdff5f5da157e481664340e9b6d0d33f85b",
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_drafts.py": "5f4ce84b20c1be5339c26ce38656ab00d3d8d9964647e701bc96108c6c26620c",
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_git_bodies.py": "3d1d7b1da3142c2af8c2bcc2d90456b0aaa6fb99ff48e5aad2d14ec1f8f2ec45",
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/document_identity.py": "f91c7602e69dfdc5e28ba6eb8d84a0e53b453ade21ecee5f93e23886ace19641",
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/document_locator_rollback.py": "84f60ebcd7dae8dc5b158a8ce31ca1b1ce040712fb82ca8fe09531c2b62114d2",
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/schema.py": "ae1528e1f66ca2727bba0302df998cc55ca1dd42c7f01abd9b53ccfc6a740409",
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_content_to_git.py": "b62d940d764174cbb7f8de85688b7126b1b70bbe4023cf4075bca938e309f890",
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_drafts.py": "6f9e0cf4dc64afb0867a20a469e8b0ced76e267a33ce9fd570df12028516dac3",
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_git_bodies.py": "464478ec006b14b1a8cde7be7a7353eeb0a2282d52df080db847af16db24a7e5",
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/document_identity.py": "c361b115f31a5aa6a0f85662dec3f4aeaaeb2e742a90b277e0bb8dedb55bffa0",
+    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/schema.py": "cf41b3830b698f6758d4e99132486fabff828f291135f143c0c555df86542920",
     "versions/v0_3/c3d2e4f601ab_release_0_3_1.py": "4f03b2801f261714a1578999c99c1744f5f0201ac2a41983cf5a5f054803a931"
   }
 }

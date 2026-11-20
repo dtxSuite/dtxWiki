@@ -51,6 +51,7 @@ from backend.mcp.protocol.tool_descriptors import (
 from backend.models.workspace import Workspace
 from backend.policy.auth import ActorContext
 from backend.schemas.common import (
+    MCP_RELEASED_TOOL_CONTRACT_DIGEST,
     MCP_RELEASED_TOOL_CONTRACT_REVISION,
     MCP_SCHEMA_VERSION,
     MCP_TOOL_CONTRACT_REVISION,
@@ -59,7 +60,8 @@ from backend.schemas.common import (
 # The digest of the tool contract as each revision shipped it, plus the one
 # unreleased revision. A change to the catalog, to any tool's input schema, to
 # any tool's output schema, or to the model-facing envelope allowlist will fail
-# the pin below. Released entries never change. The first change after a
+# the pin below. Released entries never change; `make set-version` records the
+# released entry's digest. The first change after a
 # release adds MCP_RELEASED_TOOL_CONTRACT_REVISION + 1 here and in
 # backend/schemas/common.py (with a line in its revision history); later changes
 # before the next release amend that entry and its history line. Either way,
@@ -150,6 +152,16 @@ def test_the_published_digest_is_pinned_to_the_live_catalog():
         f"released revision {MCP_RELEASED_TOOL_CONTRACT_REVISION} share revision "
         f"{unreleased}. Amend its digest, revision-history line and CHANGELOG "
         "text instead of adding another revision."
+    )
+    assert (
+        TOOL_CONTRACT_DIGESTS[MCP_RELEASED_TOOL_CONTRACT_REVISION]
+        == MCP_RELEASED_TOOL_CONTRACT_DIGEST
+    ), (
+        f"Revision {MCP_RELEASED_TOOL_CONTRACT_REVISION} was recorded with digest "
+        f"{MCP_RELEASED_TOOL_CONTRACT_DIGEST}; restore that entry and record "
+        f"contract changes as revision {unreleased}. Before the tag of the release "
+        "that first recorded it, amend the entry and rerun make set-version "
+        "VERSION=X.Y.Z instead."
     )
     pinned = TOOL_CONTRACT_DIGESTS[MCP_TOOL_CONTRACT_REVISION]
     assert tool_contract_digest() == pinned, (

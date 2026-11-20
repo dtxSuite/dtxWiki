@@ -241,7 +241,7 @@ add them to the workspace in **Settings > Members & access**.
 The installer sets the `team` app mode and runs the server and worker as
 separate systemd services in `external` worker mode; see [Run modes](#run-modes).
 Do not launch another worker manually.
-Use the [deployment guide](https://docs.dtxwiki.com/docs/0.2/administration/deployment/)
+Use the [deployment guide](https://docs.dtxwiki.com/docs/0.3/administration/deployment/)
 for private certificates, an existing proxy, or a package mirror.
 
 ### 4. Run in the background
@@ -425,7 +425,7 @@ You can change an existing key's allowed workspaces in **Settings > MCP access**
 without registering the client again. For the permission rules, see
 [MCP workspace access in the deployment guide (Korean)](https://github.com/dtxSuite/dtxWiki/blob/v0.3.1/DEPLOYMENT.md#mcp-workspace-access).
 Other clients and OAuth compatibility are covered in
-[Connect an AI app](https://docs.dtxwiki.com/docs/0.2/integrations/mcp-connections/).
+[Connect an AI app](https://docs.dtxwiki.com/docs/0.3/integrations/mcp-connections/).
 
 <a id="run-modes"></a>
 
@@ -468,7 +468,7 @@ sign-up off by default and needs a configured session secret.
 ## Upgrading to 0.3.1
 
 For systemd or Docker installations, follow the
-[maintenance guide](https://docs.dtxwiki.com/docs/0.2/administration/backup-upgrades/)
+[maintenance guide](https://docs.dtxwiki.com/docs/0.3/administration/backup-upgrades/)
 for the deployment-specific update steps. For local installations, read the
 [release notes](https://github.com/dtxSuite/dtxWiki/blob/v0.3.1/CHANGELOG.md), stop
 the server and every separately managed worker, then back up the database,
@@ -528,10 +528,10 @@ application version and its pre-upgrade database backup.
 
 | What you need | Guide |
 | --- | --- |
-| SMTP, verification, and password-recovery mail | [Email and SMTP](https://docs.dtxwiki.com/docs/0.2/administration/email-smtp/) |
-| Password recovery and workspace access | [Accounts and workspace access](https://docs.dtxwiki.com/docs/0.2/administration/members-access/) |
-| Backups, updates, and restoring data | [Backups and maintenance](https://docs.dtxwiki.com/docs/0.2/administration/backup-upgrades/) |
-| Startup or connection problems | [Troubleshooting](https://docs.dtxwiki.com/docs/0.2/administration/troubleshooting/) |
+| SMTP, verification, and password-recovery mail | [Email and SMTP](https://docs.dtxwiki.com/docs/0.3/administration/email-smtp/) |
+| Password recovery and workspace access | [Accounts and workspace access](https://docs.dtxwiki.com/docs/0.3/administration/members-access/) |
+| Backups, updates, and restoring data | [Backups and maintenance](https://docs.dtxwiki.com/docs/0.3/administration/backup-upgrades/) |
+| Startup or connection problems | [Troubleshooting](https://docs.dtxwiki.com/docs/0.3/administration/troubleshooting/) |
 
 See the [full documentation](https://docs.dtxwiki.com/) for more workflows.
 

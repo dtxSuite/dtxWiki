@@ -56,7 +56,7 @@ its PID is not the server PID.
 This package selects the Python release, so `dtxwiki update` prints the npm
 steps instead of upgrading it. Stop dtxWiki, back up `~/.dtxwiki`,
 and read the [release notes](https://github.com/dtxSuite/dtxWiki/blob/v0.3.1/CHANGELOG.md)
-and [maintenance guide](https://docs.dtxwiki.com/docs/0.2/administration/backup-upgrades/).
+and [maintenance guide](https://docs.dtxwiki.com/docs/0.3/administration/backup-upgrades/).
 Complete the 0.3.1 README's audit, bootstrap, reindex, and graph reprojection
 steps before starting the new version.
 
