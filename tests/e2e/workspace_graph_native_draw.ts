@@ -210,7 +210,8 @@ export function readNativeDraw(page: Page) {
   });
 }
 
-export async function expectNativeCounts(page: Page, points: number, links: number) {
-  await expect.poll(() => readNativeDraw(page), { message: "Native GL must draw the admitted original 10K scene" })
+export async function expectNativeCounts(page: Page, points: number, links: number,
+  options: { timeout?: number } = {}) {
+  await expect.poll(() => readNativeDraw(page), { message: "Native GL must draw the admitted original 10K scene", ...options })
     .toEqual({ points, links, currentCanvas: true });
 }

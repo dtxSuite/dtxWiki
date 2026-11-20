@@ -184,7 +184,8 @@ test.describe("PC10K normal-motion and dense real-API stability", () => {
     } : undefined;
     const scene = await openPc10k(page, "e2e-graph-10k-dense-owner@example.com", 100_000, prepareProfile);
     const drawn = nativeDrawCounts(scene);
-    await expectNativeCounts(page, drawn.points, drawn.links);
+    // The Unlinked toggle in openPc10k needs a new native frame of this scene.
+    await expectNativeCounts(page, drawn.points, drawn.links, { timeout: 90_000 });
     const canvas = page.getByTestId("graph-canvas");
     const cpuProfile = cpuProfiles.get(page);
     if (cpuProfile) await cpuProfile.start();
@@ -345,7 +346,10 @@ async function openPc10k(page: Page, email: string, relations: number, before10k
   // unlinked nodes are still hidden until the toggle below.
   await expect(canvas).toHaveAttribute("data-map-edge-count", String(relations));
   await expect(canvas).toHaveAttribute("data-map-community-layout-status", "applied", { timeout: 90_000 });
-  await expect(page.locator('.graph-canvas-frame[data-renderer-status="ready"]')).toBeVisible();
+  // Ready follows the applied layout by at least two native frames, which take
+  // seconds each for the 100K scene in software GL.
+  const ready = page.locator('.graph-canvas-frame[data-renderer-status="ready"]');
+  await expect(ready).toBeVisible({ timeout: 90_000 });
   await expect(view).toHaveAttribute("open", "");
   await view.locator("summary").click();
   const unlinked = page.getByRole("button", { name: /^Unlinked \d+$/ });
@@ -353,7 +357,7 @@ async function openPc10k(page: Page, email: string, relations: number, before10k
   await expect(canvas).toHaveAttribute("data-map-node-count", "10000");
   await expect(canvas).toHaveAttribute("data-map-edge-count", String(relations));
   await expect(canvas).toHaveAttribute("data-map-community-layout-status", "applied", { timeout: 90_000 });
-  await expect(page.locator('.graph-canvas-frame[data-renderer-status="ready"]')).toBeVisible();
+  await expect(ready).toBeVisible({ timeout: 90_000 });
   return scene;
 }
 
