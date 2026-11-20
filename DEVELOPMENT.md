@@ -838,8 +838,10 @@ v0.2.1 기준 snapshot을 삭제하고 v0.3.1 schema snapshot으로 교체했습
 초기 schema snapshot의 재현은 `scripts/generate_initial_schema.py`를 사용합니다.
 SQLite·PostgreSQL의 별도 빈 테스트 DB를 대상으로 `--database-url-env`와 `--output`을
 지정합니다. 이 도구는 `INITIALIZATION_REVISION`까지 release chain을 실제로 실행해
-reference DB를 만든 뒤 최종 DDL을 추출합니다. snapshot을 바꾸면 초기화 revision과
-`frozen_revisions.json`의 해시를 함께 갱신합니다.
+reference DB를 만든 뒤 최종 DDL을 추출합니다. 각 단계 뒤에 대상 DB의 stamp를
+확인하며, migration이 그 DB에 적용되지 않았으면 파일을 쓰지 않고 실패합니다.
+연결마다 새 DB가 되는 SQLite `:memory:`가 이 경우입니다. snapshot을 바꾸면
+초기화 revision과 `frozen_revisions.json`의 해시를 함께 갱신합니다.
 
 ### Migration 테스트 수 제한
 

@@ -41,7 +41,7 @@
     "versions/v0_2/5b7e5c149279_release_0_2.py": "37470ffd638a140a787c26b805711d0af4589bb58ed0001e4f342d739b094b56",
     "versions/v0_2/00ba02774c4a_release_0_2_3.py": "c4248b0d84bfc05e0d060c8eba7d136953b462d1882f931dc8c3514f223d90fc",
     "initialization/schema/postgresql.json": "a38a91a1b1190cc2cec0f4ed9ea085fc8b976a0c19cc8677f7693ababe50ca05",
-    "initialization/schema/sqlite.json": "3b9ac96d01e65105ad88140187722245fbecd5cc4d2ee2e7adbd551ea3c2acad",
+    "initialization/schema/sqlite.json": "c7f83a86a379a7ceef19e67d6f16c1d3c4247b9a5ccbf1c89a173af541741214",
     "initialization/versions/v0_3/c3d2e4f601ab_initial_schema.py": "37127151eb5feb82f8bf4b91d76208dee45e6260524b2b9bf29bb80a46d411d0",
     "versions/v0_1/eb86fdacb1bb_release_0_1_4.py": "a639a8ce3a5b8678503f3d0bf7b493e394308869cc3274c0084cb3dbaf2b8557",
     "revision_modules/v0_3/__init__.py": "222e69501eea4aa437e0bd13de09ed6d7af13c41cbcf058f7b666b0eff109ddf",

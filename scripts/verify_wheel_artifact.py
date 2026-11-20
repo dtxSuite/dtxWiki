@@ -131,13 +131,13 @@ sys.path.insert(0, root)
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from backend.services.ops.alembic_migration_graph import (
+    INITIALIZATION_REVISION,
     initialization_script_directory,
 )
 
+migrations = os.path.join(root, "backend", "migrations")
 config = Config(os.path.join(root, "backend", "alembic.ini"))
-config.set_main_option(
-    "script_location", os.path.join(root, "backend", "migrations")
-)
+config.set_main_option("script_location", migrations)
 script = ScriptDirectory.from_config(config)
 with warnings.catch_warnings():
     # Alembic otherwise warns and silently replaces a duplicate revision ID.
@@ -146,7 +146,13 @@ with warnings.catch_warnings():
     chain = [[entry.revision, entry.down_revision] for entry in script.walk_revisions()]
     initialization_error = None
     initialization_heads, initialization_chain = [], []
+    initialization_sources = []
     try:
+        # The release revisions the initialization snapshots stand in for.
+        initialization_sources = [
+            os.path.relpath(entry.path, migrations).replace(os.sep, "/")
+            for entry in script.walk_revisions("base", INITIALIZATION_REVISION)
+        ]
         initialization = initialization_script_directory()
         initialization_heads = sorted(initialization.get_heads())
         initialization_chain = [
@@ -182,6 +188,8 @@ print(json.dumps({
     "initialization_heads": initialization_heads,
     "initialization_chain": initialization_chain,
     "initialization_error": initialization_error,
+    "initialization_revision": INITIALIZATION_REVISION,
+    "initialization_sources": initialization_sources,
 }))
 """
 
@@ -728,12 +736,59 @@ def _check_migration_graph(root: Path) -> tuple[list[str], str | None]:
             failures.append(
                 "initialization graph does not converge to the packaged head"
             )
+        failures.extend(
+            _check_initialization_snapshots(
+                root,
+                resolved["initialization_revision"],
+                resolved["initialization_sources"],
+            )
+        )
     failures.extend(
         f"{name} resolved from {origin}, outside the artifact"
         for name, origin in sorted(resolved["foreign"].items())
     )
     heads = resolved["heads"]
     return failures, heads[0] if len(heads) == 1 else None
+
+
+def _check_initialization_snapshots(
+    root: Path, revision: str, sources: list[str]
+) -> list[str]:
+    """Each packaged snapshot was captured from this package's release chain.
+
+    The freeze manifest only proves a snapshot is the file that was committed
+    with it. A snapshot of an earlier schema boundary, committed with a
+    matching digest, passes that check and then breaks fresh installs, so its
+    recorded revision, dialect and source revisions must be the packaged ones.
+    """
+
+    migrations = root / "backend" / "migrations"
+    packaged = {
+        relative: hashlib.sha256((migrations / relative).read_bytes()).hexdigest()
+        for relative in sources
+    }
+    failures: list[str] = []
+    for dialect in ("sqlite", "postgresql"):
+        name = f"backend/migrations/initialization/schema/{dialect}.json"
+        try:
+            snapshot = json.loads((root / name).read_text(encoding="utf-8"))
+            recorded = (snapshot["revision"], snapshot["dialect"])
+            recorded_sources = snapshot["source_revision_sha256"]
+        except (OSError, ValueError, KeyError, TypeError):
+            failures.append(f"{name} is missing or unreadable")
+            continue
+        if recorded != (revision, dialect):
+            failures.append(
+                f"{name} records the {recorded[1]} schema at {recorded[0]}, but "
+                f"the package initializes {dialect} at {revision}; regenerate "
+                "the snapshot"
+            )
+        if recorded_sources != packaged:
+            failures.append(
+                f"{name} was not captured from the packaged release revisions "
+                f"through {revision}; regenerate the snapshot"
+            )
+    return failures
 
 
 def _chain_failures(

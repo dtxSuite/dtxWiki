@@ -663,6 +663,48 @@ def test_verifier_rejects_missing_or_rewritten_historical_release_mappings(tmp_p
             ) in result.stderr, (release, head)
 
 
+def test_verifier_rejects_a_stale_snapshot_committed_with_matching_digests(tmp_path):
+    """A stale snapshot whose freeze digest was updated with it still fails."""
+
+    def commit_stale_snapshots(stage):
+        migrations = stage / "backend" / "migrations"
+        manifest_path = migrations / "frozen_revisions.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        # One defect per snapshot, so neither check can hide behind the other:
+        # an earlier schema boundary, and a chain that ends one revision short.
+        for dialect, make_stale in (
+            ("sqlite", lambda snapshot: snapshot.update(revision="5b7e5c149279")),
+            (
+                "postgresql",
+                lambda snapshot: snapshot["source_revision_sha256"].popitem(),
+            ),
+        ):
+            relative = f"initialization/schema/{dialect}.json"
+            snapshot = json.loads((migrations / relative).read_text(encoding="utf-8"))
+            make_stale(snapshot)
+            (migrations / relative).write_text(json.dumps(snapshot), encoding="utf-8")
+            manifest["sha256"][relative] = hashlib.sha256(
+                (migrations / relative).read_bytes()
+            ).hexdigest()
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = _run_verifier(_dist(tmp_path, mutate=commit_stale_snapshots))
+
+    assert result.returncode == 1
+    schema = "backend/migrations/initialization/schema"
+    for artifact in (WHEEL_NAME, SDIST_NAME):
+        assert (
+            f"{artifact}: {schema}/sqlite.json records the sqlite schema at "
+            "5b7e5c149279, but the package initializes sqlite at c3d2e4f601ab"
+        ) in result.stderr
+        assert (
+            f"{artifact}: {schema}/postgresql.json was not captured from the "
+            "packaged release revisions through c3d2e4f601ab"
+        ) in result.stderr
+    # Nothing else objects: the freeze digests match, as in the reported sdist.
+    assert "4 release-blocking problem(s)" in result.stderr
+
+
 def test_verifier_rejects_a_missing_freeze_manifest(tmp_path):
     def remove_manifest(stage):
         (stage / "backend" / "migrations" / "frozen_revisions.json").unlink()
