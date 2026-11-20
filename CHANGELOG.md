@@ -176,6 +176,13 @@ target 0.2.4.
 - Match the installed-wheel browser smoke check to the current Settings save
   button so it can enable workspace experiments before checking the graph.
 
+### Database upgrade
+
+- No database schema changes. Retain the 0.2.3 schema head `00ba02774c4a` and
+  all published migration implementations. Existing 0.2.3 databases need no
+  additional migration; older supported releases follow the existing upgrade
+  path.
+
 ## 0.2.3 — 2026-11-07
 
 Beta update with shared browser drafts, clearer graph navigation and legends,
