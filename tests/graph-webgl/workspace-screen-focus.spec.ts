@@ -589,8 +589,10 @@ test("observed owner downgrade disposes live CPU layout and Cosmos 2k graph befo
 test.afterAll(async () => { await server?.close(); });
 
 test("PC10K explicit scale reaches native buffers and preserves theme geometry @pc10k", async ({ page }, testInfo) => {
-  // This journey initializes four renderers, including two with 40K edges.
-  test.setTimeout(90_000);
+  // This journey initializes four renderers, including two with 40K edges, and
+  // drags a node through one of them. Without a GPU each 40K-edge frame takes
+  // seconds, and every pointer event of the drag waits for one.
+  test.setTimeout(150_000);
   const rendererTimeout = 30_000;
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -643,9 +645,11 @@ test("PC10K explicit scale reaches native buffers and preserves theme geometry @
   const selectorBounds = await scale.boundingBox();
   expect(selectorBounds?.height).toBeGreaterThanOrEqual(44);
   await view.locator("summary").click();
-  await dragFirstNativeNode(page);
+  // Each pointer answer and camera read waits for at least one such frame.
+  await dragFirstNativeNode(page, rendererTimeout);
   await page.getByRole("button", { name: "Zoom in", exact: true }).click();
-  await expect.poll(async () => (await page.evaluate(() => window.__workspaceScreenFocus.snapshot())).zoom).not.toBe(expanded.zoom);
+  await expect.poll(async () => (await page.evaluate(() => window.__workspaceScreenFocus.snapshot())).zoom,
+    { timeout: rendererTimeout }).not.toBe(expanded.zoom);
   const beforeTheme = await page.evaluate(() => window.__workspaceScreenFocus.snapshot());
   await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
   await expect.poll(() => page.evaluate(() => window.__workspaceScreenFocus.snapshot().geometryUploads),
@@ -768,12 +772,12 @@ async function distanceFromUncoveredCenter(page: Page, index: number): Promise<n
   }, index);
 }
 
-async function dragFirstNativeNode(page: Page): Promise<void> {
+async function dragFirstNativeNode(page: Page, timeout = 5_000): Promise<void> {
   const list = page.getByTestId("workspace-graph-node-list");
   await openListSection(list);
   await listRow(list, 0).press("Enter");
   await page.getByRole("region", { name: "Details", exact: true }).getByRole("button", { name: "Center", exact: true }).click();
-  await expect.poll(() => distanceFromUncoveredCenter(page, 0)).toBeLessThan(6);
+  await expect.poll(() => distanceFromUncoveredCenter(page, 0), { timeout }).toBeLessThan(6);
   await page.evaluate(() => window.__workspaceScreenFocus.observeNativePointer());
   let point: number[] = [];
   for (let attempt = 0; attempt < 12; attempt += 1) {
@@ -784,7 +788,7 @@ async function dragFirstNativeNode(page: Page): Promise<void> {
     await page.mouse.move(point[0], point[1]);
     // Wait for the actual GPU answer before treating it as a miss. Advancing
     // Zoom while its readback is pending clears a valid late hover result.
-    await expect.poll(() => page.evaluate(() => window.__workspaceScreenFocus.nativePointer().answers))
+    await expect.poll(() => page.evaluate(() => window.__workspaceScreenFocus.nativePointer().answers), { timeout })
       .toBeGreaterThan(answered);
     if (await page.evaluate(() => window.__workspaceScreenFocus.nativePointer().index) === 0) break;
     await page.getByRole("button", { name: "Zoom in", exact: true }).click();
@@ -796,7 +800,7 @@ async function dragFirstNativeNode(page: Page): Promise<void> {
   await page.mouse.down();
   await page.mouse.move(point[0] + 35, point[1] + 20, { steps: 8 });
   await page.mouse.up();
-  await expect.poll(() => page.evaluate(() => window.__workspaceScreenFocus.snapshot().pinned)).toContain(0);
+  await expect.poll(() => page.evaluate(() => window.__workspaceScreenFocus.snapshot().pinned), { timeout }).toContain(0);
 }
 
 /** Without a search the sidebar sections start folded; opening one lists rows in scene order. */
