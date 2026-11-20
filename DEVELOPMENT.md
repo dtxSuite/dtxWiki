@@ -722,7 +722,7 @@ digest를 `MCP_RELEASED_TOOL_CONTRACT_REVISION`과
    고칩니다. 배포된 revision과 helper는 보존하고, 두 `unreleased/` 디렉터리의 잔여 파일과
    빈 `__init__.py`도 제거합니다.
 3. DB 변경이 있으면 `release_manifest.json`에 해당 앱 버전과 최종 head를 기록합니다.
-4. 배포할 파일을 확정한 뒤 `frozen_revisions.json`과 패키지 검증기의 고정 해시를 갱신합니다.
+4. 배포할 파일을 확정한 뒤 `frozen_revisions.json`의 고정 해시를 갱신합니다.
 5. `make build-wheel`로 새 산출물을 만들고 `make verify-release-artifacts`로 검증합니다.
 
 DB 변경이 없는 patch에는 새 schema 경계가 필요하지 않습니다. 릴리스 검증기는 wheel과
@@ -786,8 +786,8 @@ head가 하나여야 합니다. 기존 DB 업그레이드는 고정된 core revi
 `efcbcf724889`의 이력을 보존하고, 새 설치는 아래의 직접 초기화 경로를 사용합니다.
 패키지 검증기는 각 그래프와 고정 파일의 해시를 함께 확인합니다.
 
-새 DB의 `upgrade head`는 `initialization/versions/v0_2/5b7e5c149279_initial_schema.py`
-하나로 v0.2.1 기준 schema를 생성한 뒤 후속 migration을 적용해 현재 head에 도달합니다. SQLite·PostgreSQL의 기준 DDL은
+새 DB의 `upgrade head`는 `initialization/versions/v0_3/c3d2e4f601ab_initial_schema.py`
+하나로 v0.3.1 schema를 직접 생성하고 `c3d2e4f601ab`를 기록합니다. SQLite·PostgreSQL의 기준 DDL은
 `initialization/schema/`에 고정되어 있으며, 과거 table rebuild·backfill이나 현재 ORM
 metadata를 실행하지 않습니다. 비어 있음이 증명된 DB에서만 이 경로를 선택합니다.
 후속 schema 변경은 현재 head 뒤에 추가해 이 초기화 경로에서도 이어서 적용합니다.
@@ -827,7 +827,8 @@ migration만 적용합니다. 배포된 0.2.2 경계와 그 이전 고정 파일
 
 0.3.1은 미배포 변경을 `v0_3/c3d2e4f601ab_release_0_3_1.py` 하나로 통합합니다.
 0.2.3·0.2.4 DB는 `00ba02774c4a`에서 직접 이 revision을 적용합니다.
-공유 초안 변환 후 롤백은 업그레이드 전 백업을 복원합니다.
+공유 초안 변환 후 롤백은 업그레이드 전 백업을 복원합니다. 새 설치용 초기화는
+v0.2.1 기준 snapshot을 삭제하고 v0.3.1 schema snapshot으로 교체했습니다.
 
 지원되는 업그레이드 시작점은 최소 v0.1.2부터 유지합니다. v0.1.2의
 `efcbcf724889`, v0.1.3의 `19db79d3e622`, v0.1.4의 `eb86fdacb1bb`에서 현재 head로
@@ -836,9 +837,9 @@ migration만 적용합니다. 배포된 0.2.2 경계와 그 이전 고정 파일
 
 초기 schema snapshot의 재현은 `scripts/generate_initial_schema.py`를 사용합니다.
 SQLite·PostgreSQL의 별도 빈 테스트 DB를 대상으로 `--database-url-env`와 `--output`을
-지정합니다. 이 도구는 배포된 release chain으로 reference DB를 만든 뒤 최종 DDL을
-추출합니다. 이미 배포한 snapshot과 해시를 재생성해 덮어쓰지 않고, schema가 달라지면
-후속 revision을 추가합니다.
+지정합니다. 이 도구는 `INITIALIZATION_REVISION`까지 release chain을 실제로 실행해
+reference DB를 만든 뒤 최종 DDL을 추출합니다. snapshot을 바꾸면 초기화 revision과
+`frozen_revisions.json`의 해시를 함께 갱신합니다.
 
 ### Migration 테스트 수 제한
 

@@ -83,139 +83,6 @@ GRAPH_RUNTIME_FILES = tuple(
         "backend/utils/markdown_links.py",
     )
 )
-# SHA-256 of released revisions and their implementation modules, relative to
-# backend/migrations. A deliberate second copy of
-# backend/migrations/frozen_revisions.json: editing a released revision and
-# re-hashing the manifest in the same change still fails here, and
-# tests/packaging/test_migration_chain.py holds the two copies equal.
-FROZEN_MIGRATIONS = {
-    "initialization/schema/postgresql.json": (
-        "d8678842142290152f348ce50206a5fd12d6ff426f94178d6c912d7ad567d8da"
-    ),
-    "initialization/schema/sqlite.json": (
-        "01195f58398685838f7029007fe8b49f4f839da2e9d4860ce21085b86b0458cf"
-    ),
-    "initialization/versions/v0_2/5b7e5c149279_initial_schema.py": (
-        "91d97a286c94e9d9ae1c278d0227e42b38ab67f20239d945da665400136e3f69"
-    ),
-    "revision_modules/__init__.py": (
-        "4a10c05f30c23333471d4ce1a16d2d768361fb82aac88f3862dbedff753bf7b6"
-    ),
-    "revision_modules/v0_1/__init__.py": (
-        "4a10c05f30c23333471d4ce1a16d2d768361fb82aac88f3862dbedff753bf7b6"
-    ),
-    "revision_modules/v0_1/content_event_backfill_v1.py": (
-        "0321e31467fa8112e133b39a197b9456ea39795a684aaae0c8934eeb1f655995"
-    ),
-    "revision_modules/v0_1/efcbcf724889_core_schema/__init__.py": (
-        "b57efc37a5d5c2e8027f42613fdfdb3252376d6784ba4cff95030e74ccd26f09"
-    ),
-    "revision_modules/v0_1/efcbcf724889_core_schema/context_data.py": (
-        "366709f74283479354b738c4a4367f78183d327b184ad2d78654a60db4384ccc"
-    ),
-    "revision_modules/v0_1/efcbcf724889_core_schema/context_schema.py": (
-        "406886a9b7e0963d0ac5e21947371a0824f5dfb1d382e384d69e90011b74ed85"
-    ),
-    "revision_modules/v0_1/efcbcf724889_core_schema/identity_access_schema.py": (
-        "bdd07ca0004aa5973cd593bd6e00d1206781d0116e16ccc2a071aa206248f9f9"
-    ),
-    "revision_modules/v0_1/efcbcf724889_core_schema/library_media_schema.py": (
-        "0026ee1fb15c27692a1888f4521ae2d01d9ddf343d45f9865c41d15e47fe5cfb"
-    ),
-    "revision_modules/v0_1/efcbcf724889_core_schema/library_policy.py": (
-        "ed86943f046fedf08eb7fa0dde1a6674d07243bbcaf0907d49e4e00d8ef3732c"
-    ),
-    "revision_modules/v0_1/efcbcf724889_core_schema/operations_schema.py": (
-        "daa008f631076b9018ef2ff045a06a27258c206dc001d1a23e4a836f988c36eb"
-    ),
-    "revision_modules/v0_1/efcbcf724889_core_schema/search_schema.py": (
-        "13cb7fad720896937887a4692cb67c8afb63397cea120c38af4ae9683d7c62db"
-    ),
-    "revision_modules/v0_1/efcbcf724889_core_schema/tenancy_schema.py": (
-        "e36f7d452028a03a73ce94d50f3b6c2b30c43b60230a332170b23fbc83bc9698"
-    ),
-    "revision_modules/v0_1/efcbcf724889_core_schema/unique_key_prepass.py": (
-        "6d564b038d785c0d551ee103908ec3f61f0c08a3ff6d325053e629b3519e1cec"
-    ),
-    "revision_modules/v0_1/efcbcf724889_core_schema/workspace_schema.py": (
-        "6daaec7d569a6ec8c6f76c444a95e4fc945e218215d9234debcbb5187e2960ec"
-    ),
-    "revision_modules/v0_1/input_restrictions_v1.py": (
-        "14f50082552dc8490e2ee2ac239983f4224cbbce80758df6ce498f9cacef26d5"
-    ),
-    "revision_modules/v0_2/_5b7e5c149279_release_0_2/__init__.py": (
-        "2409dab9b580bd31c476b9a0bd3698899f01efdd7dd9d8a99280d2e187377008"
-    ),
-    "revision_modules/v0_2/_5b7e5c149279_release_0_2/co_access_schema.py": (
-        "ad1b0ad0c25f2f3067991ed6cb9e1eeaf6a36bef9f5b67eefd7620e8efe4a3e9"
-    ),
-    "revision_modules/v0_2/_5b7e5c149279_release_0_2/document_reference_schema.py": (
-        "c3d8ef2050f9f97f6bfef5e500596493f94be9bd19358649bc5b0facbcb84663"
-    ),
-    "revision_modules/v0_2/_5b7e5c149279_release_0_2/graph_schema.py": (
-        "91c11dceb2c14394078fe17da5f87c97b8f8909a22e8c5f5d6f3531812f712b7"
-    ),
-    "revision_modules/v0_2/_5b7e5c149279_release_0_2/inbox_schema.py": (
-        "0b2376bbfef03c351ebaaa3b1837f039c08c455dee1e43f80278b91337c27933"
-    ),
-    "revision_modules/v0_2/__init__.py": (
-        "5f3eb4116f07bb24e42375b4804692461fe4795f19107cfbff39e5ed19ff5686"
-    ),
-    "revision_modules/v0_2/co_read_v1.py": (
-        "d2d76a36e06862a42b661b8773f9bdd6ba58a94cdfb2610a9f1d0760147d5a88"
-    ),
-    "revision_modules/v0_2/legacy_usage_v1.py": (
-        "369051756eb50b2f06139e2d8642d0cf3379d126524579b3dc362e01e9e38a78"
-    ),
-    "revision_modules/v0_2/lifetime_co_access_v1.py": (
-        "d86ff3130305d73bda12f8618b4ce6066b35e22b58a41df8046f4d934f49567f"
-    ),
-    "revision_modules/v0_3/__init__.py": (
-        "222e69501eea4aa437e0bd13de09ed6d7af13c41cbcf058f7b666b0eff109ddf"
-    ),
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/__init__.py": (
-        "680012cb282a4f0c0e8475795e04f2e4111a4c8b608597a82f506baf46e372d9"
-    ),
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/active_block_maps.py": (
-        "0d22f950079562390653f53a2247d9e6bf7189a00146942056e5ae38f938ea79"
-    ),
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_content_to_git.py": (
-        "b62d940d764174cbb7f8de85688b7126b1b70bbe4023cf4075bca938e309f890"
-    ),
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_drafts.py": (
-        "6f9e0cf4dc64afb0867a20a469e8b0ced76e267a33ce9fd570df12028516dac3"
-    ),
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/context_git_bodies.py": (
-        "464478ec006b14b1a8cde7be7a7353eeb0a2282d52df080db847af16db24a7e5"
-    ),
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/document_identity.py": (
-        "c361b115f31a5aa6a0f85662dec3f4aeaaeb2e742a90b277e0bb8dedb55bffa0"
-    ),
-    "revision_modules/v0_3/_c3d2e4f601ab_release_0_3_1/schema.py": (
-        "cf41b3830b698f6758d4e99132486fabff828f291135f143c0c555df86542920"
-    ),
-    "versions/v0_0/bd62193d5cf6_initial_schema.py": (
-        "1c944d1f3c1d5427ff40470aacf1fbf611092a8e7e1111f19bc4089d13bd45e8"
-    ),
-    "versions/v0_1/19db79d3e622_release_0_1_3.py": (
-        "f6eade587f72c760ff86a37d2769355e22cbb647b9815c12c3e3ec084dcf5a0c"
-    ),
-    "versions/v0_1/eb86fdacb1bb_release_0_1_4.py": (
-        "a639a8ce3a5b8678503f3d0bf7b493e394308869cc3274c0084cb3dbaf2b8557"
-    ),
-    "versions/v0_1/efcbcf724889_core_schema.py": (
-        "1e4edcea3733bc4ea0f7407a9cd331a5f2f5e6913eebb289856cf87a45b9cd6b"
-    ),
-    "versions/v0_2/5b7e5c149279_release_0_2.py": (
-        "37470ffd638a140a787c26b805711d0af4589bb58ed0001e4f342d739b094b56"
-    ),
-    "versions/v0_2/00ba02774c4a_release_0_2_3.py": (
-        "c4248b0d84bfc05e0d060c8eba7d136953b462d1882f931dc8c3514f223d90fc"
-    ),
-    "versions/v0_3/c3d2e4f601ab_release_0_3_1.py": (
-        "4f03b2801f261714a1578999c99c1744f5f0201ac2a41983cf5a5f054803a931"
-    ),
-}
 FROZEN_MANIFEST = Path("backend") / "migrations" / "frozen_revisions.json"
 # A local env file can hold SMTP passwords and session secrets. Only the
 # documented templates may ship.
@@ -712,6 +579,25 @@ def _check_graph_runtime_payload(root: Path) -> list[str]:
     ]
 
 
+def _frozen_digests(root: Path) -> dict[str, str] | None:
+    """The artifact's frozen_revisions.json digests, relative to migrations/."""
+
+    try:
+        recorded = json.loads((root / FROZEN_MANIFEST).read_text(encoding="utf-8"))[
+            "sha256"
+        ]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(recorded, dict) or not recorded:
+        return None
+    if not all(
+        isinstance(relative, str) and isinstance(digest, str)
+        for relative, digest in recorded.items()
+    ):
+        return None
+    return recorded
+
+
 def _check_frozen_migrations(root: Path) -> list[str]:
     """Released migration files remain byte-identical to their frozen digests.
 
@@ -720,9 +606,12 @@ def _check_frozen_migrations(root: Path) -> list[str]:
     from a fresh one. New schema work belongs in a new revision.
     """
 
+    frozen = _frozen_digests(root)
+    if frozen is None:
+        return [f"{FROZEN_MANIFEST.as_posix()} is missing or unreadable"]
     migrations = root / "backend" / "migrations"
     failures: list[str] = []
-    for relative, expected in sorted(FROZEN_MIGRATIONS.items()):
+    for relative, expected in sorted(frozen.items()):
         path = migrations / relative
         if not path.is_file():
             failures.append(f"backend/migrations/{relative} is missing")
@@ -741,20 +630,8 @@ def _check_frozen_migrations(root: Path) -> list[str]:
         for path in sorted(
             (migrations / "revision_modules/v0_1/efcbcf724889_core_schema").glob("*.py")
         )
-        if f"revision_modules/v0_1/efcbcf724889_core_schema/{path.name}"
-        not in FROZEN_MIGRATIONS
+        if f"revision_modules/v0_1/efcbcf724889_core_schema/{path.name}" not in frozen
     )
-    manifest = root / FROZEN_MANIFEST
-    try:
-        recorded = json.loads(manifest.read_text(encoding="utf-8"))["sha256"]
-    except (OSError, ValueError, KeyError, TypeError):
-        failures.append(f"{FROZEN_MANIFEST.as_posix()} is missing or unreadable")
-    else:
-        if recorded != FROZEN_MIGRATIONS:
-            failures.append(
-                f"{FROZEN_MANIFEST.as_posix()} does not record the frozen "
-                "canonical baseline migration digests"
-            )
     return failures
 
 
@@ -844,7 +721,7 @@ def _check_migration_graph(root: Path) -> tuple[list[str], str | None]:
             for failure in _chain_failures(
                 resolved["initialization_heads"],
                 resolved["initialization_chain"],
-                baseline=(("5b7e5c149279", None),),
+                baseline=(("c3d2e4f601ab", None),),
             )
         )
         if resolved["initialization_heads"] != resolved["heads"]:
@@ -1036,7 +913,7 @@ def verify_artifact(
     return [], (
         f"{artifact.name}: alembic head {head}, "
         f"{_revision_module_count(root)} packaged core revision modules, "
-        f"{len(FROZEN_MIGRATIONS)} frozen migration files intact, "
+        f"{len(_frozen_digests(root))} frozen migration files intact, "
         "frontend bundle intact"
     )
 

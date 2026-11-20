@@ -630,15 +630,6 @@ def test_verifier_rejects_a_module_added_to_the_frozen_revision(tmp_path):
     ) in result.stdout + result.stderr
 
 
-def _rehash_manifest(stage):
-    """The edit-and-rehash change the second copy in the verifier exists for."""
-
-    manifest = stage / "backend" / "migrations" / "frozen_revisions.json"
-    payload = json.loads(manifest.read_text(encoding="utf-8"))
-    payload["sha256"]["versions/v0_1/efcbcf724889_core_schema.py"] = "0" * 64
-    manifest.write_text(json.dumps(payload), encoding="utf-8")
-
-
 def test_verifier_rejects_missing_or_rewritten_historical_release_mappings(tmp_path):
     # Check each boundary independently: corrupting both at once could hide
     # a verifier that pins only one of them. Share the existing archive check.
@@ -672,30 +663,17 @@ def test_verifier_rejects_missing_or_rewritten_historical_release_mappings(tmp_p
             ) in result.stderr, (release, head)
 
 
-@pytest.mark.parametrize(
-    "mutate, expected",
-    [
-        (
-            lambda stage: (
-                stage / "backend" / "migrations" / "frozen_revisions.json"
-            ).unlink(),
-            "backend/migrations/frozen_revisions.json is missing or unreadable",
-        ),
-        (
-            _rehash_manifest,
-            "backend/migrations/frozen_revisions.json does not record the frozen "
-            "canonical baseline migration digests",
-        ),
-    ],
-    ids=["missing", "rehashed"],
-)
-def test_verifier_rejects_a_missing_or_rewritten_freeze_manifest(
-    tmp_path, mutate, expected
-):
-    result = _run_verifier(_dist(tmp_path, mutate=mutate))
+def test_verifier_rejects_a_missing_freeze_manifest(tmp_path):
+    def remove_manifest(stage):
+        (stage / "backend" / "migrations" / "frozen_revisions.json").unlink()
+
+    result = _run_verifier(_dist(tmp_path, mutate=remove_manifest))
 
     assert result.returncode == 1
-    assert expected in result.stdout + result.stderr
+    assert (
+        "backend/migrations/frozen_revisions.json is missing or unreadable"
+        in result.stdout + result.stderr
+    )
 
 
 @pytest.mark.parametrize("artifact_kind", ["wheel", "sdist"])

@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import sqlalchemy as sa
 from alembic import command
@@ -20,8 +21,10 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import AddConstraint, CreateTable
 
 from backend.app.bootstrap import resolve_alembic_ini, resolve_migrations_dir
+from backend.services.ops.alembic_migration_graph import (
+    INITIALIZATION_REVISION as RELEASE_REVISION,
+)
 
-RELEASE_REVISION = "5b7e5c149279"
 RELEASE_014_REVISION = "eb86fdacb1bb"
 FTS_NAMES = ("search_doc_fts", "page_name_trgm")
 
@@ -134,8 +137,14 @@ def generate(database_url: str, destination: Path) -> None:
         config.set_main_option("sqlalchemy.url", database_url)
         # The explicit published 0.1.4 target bypasses the fresh-only route, so
         # the reference schema is the result of the real release migrations.
-        command.upgrade(config, RELEASE_014_REVISION)
-        command.upgrade(config, RELEASE_REVISION)
+        # The Context Git conversion requires a repository root even though an
+        # empty database has no page to write there.
+        with TemporaryDirectory(prefix="dtxwiki-initial-schema-") as repositories:
+            config.attributes["context_repositories_root"] = Path(repositories)
+            command.upgrade(config, RELEASE_014_REVISION)
+            command.upgrade(config, RELEASE_REVISION)
+            if any(Path(repositories).iterdir()):
+                raise ValueError("empty migration unexpectedly wrote repositories")
         with engine.connect() as connection:
             tables = sorted(
                 name

@@ -13,6 +13,8 @@
   updates stored document locators, and converts old drafts to shared drafts
   in migration `c3d2e4f601ab`. To roll back after that conversion, restore the
   pre-upgrade backup with the previous dtxWiki version.
+- New installations create the 0.3.1 schema directly at `c3d2e4f601ab`
+  instead of initializing the 0.2.1 schema and applying later migrations.
 - Context drafts are shared and readable by workspace Editors and Owners.
   Viewers and public visitors continue to read published content.
 - Page bodies no longer resolve `/context/<name>.md` or `/pages/<slug>` links.

@@ -1060,7 +1060,7 @@ def test_first_install_rolls_back_complete_schema_on_late_failure(tmp_path):
         resolve_migrations_dir(), scripts, ignore=shutil.ignore_patterns("__pycache__")
     )
     initializer = (
-        scripts / "initialization/versions/v0_2/5b7e5c149279_initial_schema.py"
+        scripts / "initialization/versions/v0_3/c3d2e4f601ab_initial_schema.py"
     )
     initializer.write_text(
         initializer.read_text()

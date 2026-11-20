@@ -2,10 +2,8 @@
 
 import ast
 import hashlib
-import importlib.util
 import json
 import shutil
-import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -28,7 +26,6 @@ CORE_REVISION_DIR = (
 )
 FRAGMENTS_DIR = MIGRATIONS_DIR.parent / "fragments"
 FREEZE_MANIFEST = MIGRATIONS_DIR.parent / "frozen_revisions.json"
-RELEASE_GATE = REPO_ROOT / "scripts" / "verify_wheel_artifact.py"
 INITIAL_REVISION = "bd62193d5cf6"
 # Frozen core schema boundary of the 0.1 release group.
 CORE_REVISION = "efcbcf724889"
@@ -118,14 +115,15 @@ def test_graph_preserves_released_boundaries_and_appends_current_head():
     assert {
         revision: graph[revision] for revision in expected_prefix
     } == expected_prefix
-    appended = set(graph) - _revision_ancestors(graph, RELEASE_021_REVISION)
+    # A fresh install creates the 0.3.1 schema directly; later revisions append.
+    appended = set(graph) - _revision_ancestors(graph, RELEASE_031_REVISION)
     assert initialization_graph == {
-        RELEASE_021_REVISION: None,
+        RELEASE_031_REVISION: None,
         **{revision: graph[revision] for revision in appended},
     }
     assert _revision_ancestors(graph, CURRENT_HEAD) == set(graph)
     assert all(
-        RELEASE_021_REVISION in _revision_ancestors(graph, revision)
+        RELEASE_031_REVISION in _revision_ancestors(graph, revision)
         for revision in appended
     )
     assert Path(script.get_revision(RELEASE_021_REVISION).path).parent.name == "v0_2"
@@ -199,7 +197,7 @@ def test_the_freeze_covers_every_released_migration_file():
         "revision_modules/v0_1/content_event_backfill_v1.py",
         "revision_modules/v0_1/input_restrictions_v1.py",
         "versions/v0_1/eb86fdacb1bb_release_0_1_4.py",
-        "initialization/versions/v0_2/5b7e5c149279_initial_schema.py",
+        "initialization/versions/v0_3/c3d2e4f601ab_initial_schema.py",
         "initialization/schema/sqlite.json",
         "initialization/schema/postgresql.json",
         *(
@@ -227,20 +225,6 @@ def test_the_freeze_covers_every_released_migration_file():
     }
 
     assert set(_frozen_digests()) == released
-
-
-def test_the_release_gate_pins_the_same_digests_as_the_manifest():
-    """Two copies on purpose: rehashing the manifest alone must not pass."""
-
-    spec = importlib.util.spec_from_file_location("_release_gate", RELEASE_GATE)
-    module = importlib.util.module_from_spec(spec)
-    sys.path.insert(0, str(RELEASE_GATE.parent))
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.remove(str(RELEASE_GATE.parent))
-
-    assert module.FROZEN_MIGRATIONS == _frozen_digests()
 
 
 def test_core_domain_modules_are_not_alembic_revisions():

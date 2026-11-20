@@ -1345,7 +1345,7 @@ v0.1.2부터의 배포본은 중간 버전을 따로 설치하지 않고 현재 
 
 | 기존 배포 버전 | 기존 DB revision | 현재 버전으로의 경로 |
 | --- | --- | --- |
-| 새 설치 | 없음, DB가 비어 있음 | v0.2.1 schema를 직접 초기화한 뒤 v0.2.3 및 v0.3.1 migration 적용 |
+| 새 설치 | 없음, DB가 비어 있음 | v0.3.1 schema를 직접 초기화 |
 | v0.1.2 | `efcbcf724889` | 0.1.3 → 0.1.4 → v0.2 → v0.3.1 경로 적용 |
 | v0.1.3 | `19db79d3e622` | 0.1.4 → v0.2 → v0.3.1 경로 적용 |
 | v0.1.4 | `eb86fdacb1bb` | v0.2와 v0.3.1 migration 적용, 0.1.4 로그인·계정 보존 데이터 유지 |
@@ -1358,12 +1358,10 @@ v0.1.2부터의 배포본은 중간 버전을 따로 설치하지 않고 현재 
            → 00ba02774c4a (0.2.3·0.2.4)
            → c3d2e4f601ab (0.3.1)
 
-새 설치: base → 5b7e5c149279 (v0.2.1 schema 직접 생성)
-        → 00ba02774c4a → c3d2e4f601ab
+새 설치: base → c3d2e4f601ab (v0.3.1 schema 직접 생성)
 ```
 
-새 DB는 과거 migration을 재실행하지 않고 고정된 v0.2.1 schema를 직접 생성한 뒤
-v0.2.3과 v0.3.1의 후속 migration을 적용합니다.
+새 DB는 과거 migration을 재실행하지 않고 고정된 v0.3.1 schema를 직접 생성합니다.
 0.1.2·0.1.3 DB는 배포된 0.1.4 migration을 거쳐 업그레이드합니다.
 0.1.4 DB는 이미 적용된 SSO·계정 보존·Review 변경은 재실행하지 않고 Inbox·링크
 locator·Graph·문서 참고문헌·Chats 변경을 적용합니다. 시작 시 bootstrap과 직접
@@ -1465,9 +1463,9 @@ backend/migrations/
 │   ├── v0_3/
 │   │   └── c3d2e4f601ab_release_0_3_1.py
 │   └── unreleased/                        # 개발 중인 revision, 배포 전 이동·통합
-├── initialization/                        # 새 설치용 v0.2.1 초기화
-│   ├── versions/v0_2/5b7e5c149279_initial_schema.py
-│   └── schema/                            # SQLite·PostgreSQL의 고정된 v0.2.1 DDL
+├── initialization/                        # 새 설치용 v0.3.1 초기화
+│   ├── versions/v0_3/c3d2e4f601ab_initial_schema.py
+│   └── schema/                            # SQLite·PostgreSQL의 고정된 v0.3.1 DDL
 ├── revision_modules/                      # 릴리스 그룹별 고정 helper 구현
 │   ├── v0_1/
 │   ├── v0_2/
@@ -1486,7 +1484,8 @@ backend/migrations/
 
 `release_manifest.json`은 DB 변경이 포함된 스키마 릴리스와 head를 연결합니다. DB 변경이
 없는 Patch 배포마다 새 항목을 만들 필요는 없습니다. 배포한 실행 파일과 보조 코드의
-해시는 `frozen_revisions.json`과 패키지 검증기에 고정합니다. 배포된 migration은 수정하거나
+해시는 `frozen_revisions.json`에 고정하고, 패키지 검증기가 산출물의 파일을 이 해시와
+대조합니다. 배포된 migration은 수정하거나
 다시 합치지 않고, 변경이 필요할 때 후속 revision을 추가합니다.
 
 ### 새 DB 변경 추가
@@ -1505,8 +1504,8 @@ freeze하지 않고 개발 중 수정·통합할 수 있습니다. helper는 파
 별도로 수행합니다. Alembic은 하위 디렉터리를 재귀 탐색하므로 추가 설정 없이 읽습니다.
 
 릴리스 브랜치에서 앱 버전을 정한 뒤 revision과 helper를 릴리스 그룹으로 이동·통합하고,
-import 경로를 바꿉니다. 이어서 `release_manifest.json`의 head와 `frozen_revisions.json` 및
-검증기의 고정 해시를 확정하고, 새 wheel·sdist를 `make verify-release-artifacts`로 확인합니다.
+import 경로를 바꿉니다. 이어서 `release_manifest.json`의 head와 `frozen_revisions.json`의
+고정 해시를 확정하고, 새 wheel·sdist를 `make verify-release-artifacts`로 확인합니다.
 배포 산출물의 두 `unreleased/` 경로는 비어 있어야 하며 helper의 `__init__.py`도 남기지 않습니다.
 이전에 미배포 revision을 적용한 dev DB는 위의 "미배포 중간 revision" 절차로 전환합니다.
 
