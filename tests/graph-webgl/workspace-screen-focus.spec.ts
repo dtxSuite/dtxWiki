@@ -589,7 +589,9 @@ test("observed owner downgrade disposes live CPU layout and Cosmos 2k graph befo
 test.afterAll(async () => { await server?.close(); });
 
 test("PC10K explicit scale reaches native buffers and preserves theme geometry @pc10k", async ({ page }, testInfo) => {
-  test.setTimeout(60_000);
+  // This journey initializes four renderers, including two with 40K edges.
+  test.setTimeout(90_000);
+  const rendererTimeout = 30_000;
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
@@ -611,7 +613,7 @@ test("PC10K explicit scale reaches native buffers and preserves theme geometry @
   // The list holds every node, so the one folder is a row beside the documents.
   const list = page.getByTestId("workspace-graph-node-list");
   await expect(list).toHaveAttribute("data-total-count", "2001");
-  try { await expectSettledNativeScene(page); }
+  try { await expectSettledNativeScene(page, { waitForD3Positions: true }); }
   catch (error) {
     await testInfo.attach("pc10k-initial-readiness-errors", { contentType: "application/json",
       body: JSON.stringify({ errors, url: page.url(),
@@ -625,7 +627,7 @@ test("PC10K explicit scale reaches native buffers and preserves theme geometry @
   const scale = view.getByRole("combobox", { name: "Map node limit" });
   await scale.selectOption("10k");
   await expect(list).toHaveAttribute("data-total-count", "10001");
-  await expectSettledNativeScene(page);
+  await expectSettledNativeScene(page, { timeout: rendererTimeout });
   const expanded = await page.evaluate(() => window.__workspaceScreenFocus.snapshot());
   // 10,000 documents and 30,000 relations, plus the one folder that holds
   // every document and its 10,000 containment relations.
@@ -646,8 +648,9 @@ test("PC10K explicit scale reaches native buffers and preserves theme geometry @
   await expect.poll(async () => (await page.evaluate(() => window.__workspaceScreenFocus.snapshot())).zoom).not.toBe(expanded.zoom);
   const beforeTheme = await page.evaluate(() => window.__workspaceScreenFocus.snapshot());
   await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
-  await expect.poll(async () => (await page.evaluate(() => window.__workspaceScreenFocus.snapshot())).geometryUploads).toBeGreaterThan(beforeTheme.geometryUploads);
-  await expectSettledNativeScene(page);
+  await expect.poll(() => page.evaluate(() => window.__workspaceScreenFocus.snapshot().geometryUploads),
+    { timeout: rendererTimeout }).toBeGreaterThan(beforeTheme.geometryUploads);
+  await expectSettledNativeScene(page, { timeout: rendererTimeout });
   const afterTheme = await page.evaluate(() => window.__workspaceScreenFocus.snapshot());
   expect(afterTheme.positions).toEqual(beforeTheme.positions);
   expect(afterTheme.zoom).toBeCloseTo(beforeTheme.zoom!, 4);
@@ -661,7 +664,7 @@ test("PC10K explicit scale reaches native buffers and preserves theme geometry @
   await view.locator("summary").click();
   await scale.selectOption("2k");
   await expect(list).toHaveAttribute("data-total-count", "2001");
-  await expectSettledNativeScene(page);
+  await expectSettledNativeScene(page, { waitForD3Positions: true });
   // 2,000 documents plus their one folder.
   expect((await page.evaluate(() => window.__workspaceScreenFocus.snapshot())).positions).toHaveLength((2000 + 1) * 2);
   expect(errors).toEqual([]);
@@ -924,15 +927,16 @@ for (const { language, mobile } of [
   });
 }
 
-async function expectSettledNativeScene(page: Page): Promise<void> {
-  await expect(page.locator(".graph-canvas-frame")).toHaveAttribute("data-renderer-status", "ready");
-  // Renderer readiness can expose the bounded fallback before the initial
-  // worker finishes. Focus-only invariance starts after that real upload/fit,
-  // not before it; reduced motion disables simulation, not initialization.
-  // This is an explicit loading allowance, not a layout-speed gate.
-  const canvas = page.locator(".graph-canvas");
-  await expect(canvas).toHaveAttribute("data-map-community-count", /^[1-9]\d*$/, { timeout: 15_000 });
-  await expect(canvas).toHaveAttribute("data-map-community-layout-status", "applied");
+async function expectSettledNativeScene(page: Page, {
+  timeout = 15_000, waitForD3Positions = false,
+}: { timeout?: number; waitForD3Positions?: boolean } = {}): Promise<void> {
+  const canvas = page.locator(".graph-canvas-frame[data-renderer-status='ready'] .graph-canvas[data-map-community-layout-status='applied']");
+  await expect(canvas).toHaveAttribute("data-map-community-count", /^[1-9]\d*$/, { timeout });
+  if (waitForD3Positions) {
+    // Community metadata can be applied while the reduced-motion D3 worker
+    // still solves its first frame. Take geometry baselines after its upload.
+    await expect(canvas).toHaveAttribute("data-map-layout-ticks", /^[1-9]\d*$/, { timeout });
+  }
   await page.evaluate(() => new Promise<void>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   }));
@@ -947,7 +951,7 @@ test("real 2k Screen keyboard node focus reaches native Cosmos without selection
   await openFocusFixture(page);
   const list = page.getByTestId("workspace-graph-node-list");
   await expect(list).toHaveAttribute("data-total-count", "2000");
-  await expectSettledNativeScene(page);
+  await expectSettledNativeScene(page, { waitForD3Positions: true });
   const initial = await page.evaluate(() => window.__workspaceScreenFocus.snapshot());
   expect(initial.positions).toHaveLength(4000);
   expect(initial.glError).toBe(0);
@@ -985,7 +989,7 @@ test("real 2k Screen edge focus reaches Cosmos endpoints and blur restores indep
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await openFocusFixture(page);
-  await expectSettledNativeScene(page);
+  await expectSettledNativeScene(page, { waitForD3Positions: true });
   const nodes = page.getByTestId("workspace-graph-node-list");
   await openListSection(nodes);
   await listRow(nodes, 0).focus();
@@ -1031,7 +1035,7 @@ test("native 2k dark selection emphasizes original incident links without hiding
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(`${origin}/?theme=dark`);
-  await expectSettledNativeScene(page);
+  await expectSettledNativeScene(page, { waitForD3Positions: true });
   const before = await page.evaluate(() => window.__workspaceScreenFocus.snapshot());
   // Native point selection must not navigate; a document-list click explicitly
   // centers its document and is independently covered by the existing journey.
@@ -1116,7 +1120,7 @@ test("Screen keyboard node and edge focus emphasis survives pointer hover, which
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await openFocusFixture(page);
-  await expectSettledNativeScene(page);
+  await expectSettledNativeScene(page, { waitForD3Positions: true });
   const before = await page.evaluate(() => window.__workspaceScreenFocus.snapshot());
   const nodeList = page.getByTestId("workspace-graph-node-list");
   const edgeList = page.getByTestId("workspace-graph-edge-list");
@@ -1172,7 +1176,7 @@ for (const { language, mobile } of [
     await page.goto(`${origin}/?refineFolders=1&lang=${language}`);
     await expect(page.getByTestId("workspace-graph-node-list")).toHaveAttribute("data-total-count", "2000");
     // The inline map remains mounted beneath Refine at every viewport size.
-    await expectSettledNativeScene(page);
+    await expectSettledNativeScene(page, { waitForD3Positions: true });
     const before = await page.evaluate(() => window.__workspaceScreenFocus.snapshot());
     const words = language === "en" ? {
       refine: "Refine", title: "Refine data", find: "Find folder", folder: "Folder", mode: "Folder rule",
