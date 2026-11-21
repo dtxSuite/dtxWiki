@@ -1,78 +1,68 @@
 # Changelog
 
-## Unreleased
-
-### Merging Context changes in the browser
-
-- When changes overlap, the merge dialog shows each overlapping place as a
-  card in document order -- the title and type first -- with both sides and
-  the place's result, unchanged lines folded, changes merged automatically
-  marked, and a place list to move between them. The merge method "Keep both
-  changes" (chosen when it opens) or "Prefer the latest change" decides every
-  place; choosing a side, letting go of it (both kept) or editing one place
-  makes the method "Custom", and the other places keep the previous method's
-  result. Choosing a method again decides every place again, asking first if
-  a place was edited. Large places scroll side by side and open in a
-  full-screen three-column comparison. The same dialog serves publishing,
-  approving a review, merging the published version into a draft, and two
-  people saving one draft. A clean merge publishes without asking when it is
-  the merge the screen showed. Its confirm button names that write -- "Publish", "Approve
-  and publish", "Merge" or "Save this result" -- and the version bar, the
-  dialog, the editor and the Review screen count an overlapping title or type
-  once.
-- Korean labels use one word per concept across the app: 병합 (merge), 리뷰
-  (review), 거절 (reject), 변경 요청 (request changes) and 게시 (publish).
-- One version bar on a Context page replaces the draft banner, the open-draft
-  list, the review banner and the header's draft and review counts. It names
-  the version on screen (switch to the published version or any open draft),
-  its state, and its actions: View changes, Review, Merge published (when the
-  draft is behind), Discard draft, Request changes, and Publish -- "Approve and
-  publish" when the draft has an open review, in the reader, the editor and
-  the Review screen alike. A published page with no open draft shows no bar.
-- Publishing and approving act on the draft on screen only, with the merge it
-  showed: "Publishing publishes this draft merged with the current published
-  version" or, for overlaps, how publishing will ask. If the draft, the
-  published version or its review changed meanwhile, nothing is written and
-  the new state is shown. View changes (and the Review screen's "What
-  publishing changes") compares the current published version with what
-  publishing would publish, so changes published meanwhile no longer read as
-  reverted.
-- History says why a draft ended: Discarded, Merged (published by a merge or
-  merged into another version) or Rejected; so does an attachment's usage list.
-- REST: Publishing a draft accepts `expected_review_item_id` (null: none was
-  shown) and refuses a different latest open review with `context_review_changed`.
-  A publish approves the draft's latest open review. `diff` accepts
-  `baseline=publish_result`, which reports `merge_kind`, `published_version_id`
-  and `editing_revision`. Version projections and attachment usage items add
-  `closed_reason`.
+## 0.3.2 — 2026-11-21
 
 ### Important changes
 
-- Upgrading from 0.2 with this release keeps each Context version's original
-  previous version for History, also when the upgrade stops at the 0.3.1
-  revision `c3d2e4f601ab` and continues later. Both runs need an online
-  database connection; the `--sql` mode is refused. Finish the upgrade before
-  `dtxwiki migrate-data`. A server whose drafts an earlier release already
-  converted does not get those links back. An Alembic downgrade to
-  `c3d2e4f601ab` removes them, and upgrading again does not restore them. To
-  go back to 0.2, restore the pre-upgrade backup, including the database.
+- 0.3.2 adds migration `002398e0fcdc` after the 0.3.1 revision `c3d2e4f601ab`.
+  It creates the `context_version_history_parent` table for the History links
+  below. New installations still create the 0.3.1 schema directly and then
+  apply it. Upgrades from before 0.3.1 still apply `c3d2e4f601ab` and its
+  shared-draft conversion.
+- An upgrade from before 0.3.1 keeps each Context version's original previous
+  version for History, also when it stops at `c3d2e4f601ab` and continues
+  later. Both runs need an online database connection; the `--sql` mode is
+  refused. Finish the upgrade before `dtxwiki migrate-data`. A server already
+  upgraded with 0.3.1 does not get those links back. An Alembic downgrade to
+  `c3d2e4f601ab` removes them, and upgrading again does not restore them. To go
+  back to 0.2, restore the pre-upgrade backup, including the database.
 - MCP tool contract revision 31 follows revision 30 of 0.3.1. Refresh cached
   `tools/list` results and result schemas. Context version projections add
   `closed_reason` (discarded, merged or rejected). `bring_in_context_version`
   is titled "Merge context version", and Korean tool titles use the app's
-  merge and review wording. `list_changes` adds `history_merge_parent_version_ids`,
-  the parents History draws beside `prior_version_id`. For actors who can read
-  drafts, `prior_version_id` can name the original previous version from 0.2,
-  which can differ from the Git `parent_version_id`.
+  merge and review wording. `list_changes` adds
+  `history_merge_parent_version_ids`, the parents History draws beside
+  `prior_version_id`. For actors who can read drafts, `prior_version_id` can
+  name the original previous version from before 0.3.1, which can differ from
+  the Git `parent_version_id`.
+
+### Features
+
+- **context**: improve draft publishing and conflict resolution ([#147](https://github.com/dtxSuite/dtxWiki/pull/147))
+  - Use one version bar to switch between published content and drafts, compare
+    what publishing will change, merge newer published changes, and review or
+    publish the displayed draft. Publishing checks that the draft, published
+    version, and open review still match what the user saw.
+  - Resolve overlaps in document order using the side-by-side comparison and
+    editable results. Start with **Keep both changes** or **Prefer the latest
+    change**, then customize individual overlaps. Large overlaps can open in a
+    full-screen comparison. The same dialog handles publishing, review
+    approval, merging the published version into a draft, and concurrent
+    draft saves. History and attachment usage show why drafts closed.
+  - Korean labels use one word per concept: 병합 (merge), 리뷰 (review),
+    거절 (reject), 변경 요청 (request changes) and 게시 (publish).
+  - REST publishing accepts `expected_review_item_id` (`null` when no open
+    review was shown) and returns `context_review_changed` on a mismatch.
+    Publishing approves the draft's latest open review. With
+    `baseline=publish_result`, the diff reports `merge_kind`,
+    `published_version_id`, and `editing_revision`. Version projections and
+    attachment usage add `closed_reason`.
+- **tree**: show favorites above the full tree ([#145](https://github.com/dtxSuite/dtxWiki/pull/145))
+  - Open favorite pages and folders from a collapsible section that preserves
+    their folder hierarchy.
+- **release**: generate PR-linked notes and finalize MCP revisions ([#144](https://github.com/dtxSuite/dtxWiki/pull/144))
+  - Build the GitHub Release body from the reviewed changelog and record the
+    released MCP contract when setting the app version.
 
 ### Fixes
 
-- Preserve original Context version relationships in History when upgrading
-  from 0.2, including chains of unpublished drafts. A commit later brought into
-  such a draft is drawn beside the original previous version. Viewers keep the
-  published version history.
-- History no longer stops rendering on long histories whose versions connect
-  to versions listed above them.
+- **context**: preserve version history across v0.3 upgrades ([#148](https://github.com/dtxSuite/dtxWiki/pull/148))
+  - History keeps the original version relationships from before 0.3.1,
+    including chains of unpublished drafts. A commit later merged into such a
+    draft is drawn beside the original previous version. Viewers keep the
+    published version history.
+  - History no longer stops rendering on long histories whose versions connect
+    to versions listed above them.
 
 ## 0.3.1 — 2026-11-20
 

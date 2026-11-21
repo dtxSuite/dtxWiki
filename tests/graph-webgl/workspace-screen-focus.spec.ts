@@ -197,7 +197,10 @@ for (const mobile of [false, true]) {
       const restored = await page.evaluate(() => window.__workspaceScreenFocus.snapshot());
       expect(restored.positions).toEqual(beforeRemount.positions);
       expect(restored.pinned).toEqual(beforeRemount.pinned);
-      expect(restored.center).toEqual(beforeRemount.center);
+      // The remount sets the camera again from the persisted center, so the
+      // read-back center can differ from the original in its last double bits.
+      expect(restored.center).toHaveLength(2);
+      restored.center!.forEach((value, axis) => expect(value).toBeCloseTo(beforeRemount.center![axis], 6));
       expect(restored.zoom).toBe(beforeRemount.zoom);
       expect(restored.running).toBe(false);
       expect(restored.layoutRunning).toBe(false);
