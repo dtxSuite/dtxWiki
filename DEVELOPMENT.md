@@ -746,6 +746,30 @@ Release workflow는 PyPI·npm 게시 전 build job에서 태그 버전과 일치
 경고를 남기고 설치 안내와 CHANGELOG 링크만으로 본문을 만들며, 릴리스는 중단하지 않습니다.
 게시 단계에서 파일을 수정하거나 PR 목록을 다시 생성하지 않습니다.
 
+#### Changelog 작성 규칙
+
+독자는 업그레이드하는 운영자와 REST·MCP 클라이언트입니다. 관찰할 수 있는 동작과 필요한
+조치만 적고, 구현 방식은 적지 않습니다.
+
+- PR에서 `Unreleased`를 고칠 때는 생성기와 같은 형식으로 적습니다. 해당 종류의
+  `### Features`·`### Fixes` 등에 `- **scope**: PR 제목 ([#N](https://github.com/dtxSuite/dtxWiki/pull/N))`
+  항목을 두고, 보충 설명은 그 아래 두 칸 들여쓴 하위 목록으로 적습니다. 링크 없는 목록이나
+  새 소제목은 재생성할 때 사라집니다.
+- `### Important changes`에는 릴리스 전체에 해당하는 안내만 적습니다.
+  - DB schema: 새 migration의 revision ID와 앞선 head를 적고, 없으면 직전 릴리스의
+    schema를 그대로 쓴다고 적습니다.
+  - 업그레이드 경로·되돌리기 제약·필요한 백업을 적습니다.
+  - MCP tool contract: 바뀐 revision 번호, 직전 배포본의 revision, 클라이언트가 할 일을
+    적습니다.
+- 한 사실은 한 곳에만 적습니다. 업그레이드 조치는 `Important changes`에, 기능 설명은
+  해당 PR 항목 아래에 둡니다. 같은 revision의 MCP 변경은 한 항목으로 합칩니다.
+- 화면과 같은 용어(병합, 리뷰, 거절, 변경 요청, 게시)를 씁니다. 코드 식별자, API 필드,
+  명령, revision ID는 백틱으로 감쌉니다.
+- 버전을 확정한 뒤 PR이 더 들어오거나 릴리스 브랜치를 rebase하면 해당 버전 항목 전체를
+  다시 검토합니다. 특히 schema·MCP revision·업그레이드 경로 서술이 새 변경과 맞는지,
+  README·DEPLOYMENT.md의 같은 서술과 맞는지 확인합니다.
+- 배포된 버전의 항목은 고치지 않습니다.
+
 ### MCP tool contract revision
 
 클라이언트가 관찰할 수 있는 MCP tool 계약이 바뀐 릴리스는 직전 배포본의
