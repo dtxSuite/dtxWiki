@@ -792,7 +792,7 @@ docker compose up -d app worker
 이미 이 head인 DB에도 v0.2.3의 단일 후속 migration을 적용합니다. v0.2.3 준비 중의
 `fec23ff328e6` DB는 원래 checkout으로 `00ba02774c4a`까지 올리고 백업·검증한 뒤
 전환해야 합니다. 제거된 revision을 `alembic stamp`로 우회하지 마세요. 배포된
-0.1.2 이상 DB는 중간 앱 버전을 설치하지 않고 0.3.1로 직접 업그레이드합니다.
+0.1.2 이상 DB는 중간 앱 버전을 설치하지 않고 0.3.2로 직접 업그레이드합니다.
 
 0.3.1의 공유 Context 초안 변환은 역변환을 지원하지 않습니다. 업그레이드 전에 DB,
 Library 파일, Context `repositories/`, 환경 설정과 키의 백업을 함께 확보하세요.
@@ -849,7 +849,7 @@ readiness를 수행하며, 실패 시 자동 rollback하지 않고 복구 명령
 ```bash
 # systemd + private wheel index
 sudo dtxwiki update --check               # 새 버전 유무만 (가능하면 exit 10)
-sudo dtxwiki update --version 0.3.1       # 특정 버전 핀
+sudo dtxwiki update --version 0.3.2       # 특정 버전 핀
 sudo dtxwiki update --index-url https://pypi.internal/simple   # 사설 wheel index
 ```
 
@@ -1335,7 +1335,7 @@ endpoint를 사용한다.
 
 0.1.2부터 DB migration은 **릴리스 그룹**, **revision ID**, **변경 내용 이름**을 구분해
 관리합니다. 당시 ID·파일 배치 정리는 schema·데이터 작업을 바꾸지 않았습니다.
-새 설치와 기존 배포본 업그레이드는 v0.3.1 head `c3d2e4f601ab`에 도달합니다.
+v0.3.2의 새 설치와 기존 배포본 업그레이드는 v0.3.1 head `c3d2e4f601ab`에 도달합니다.
 v0.2.3·v0.2.4의 head `00ba02774c4a`에서 이 단일 migration을 적용해 Context 이력
 본문의 Git 저장, MCP 호출 수명 주기, 문서 URL, 공유 초안 관련 변경을 반영합니다.
 
@@ -1351,6 +1351,7 @@ v0.1.2부터의 배포본은 중간 버전을 따로 설치하지 않고 현재 
 | v0.1.4 | `eb86fdacb1bb` | v0.2와 v0.3.1 migration 적용, 0.1.4 로그인·계정 보존 데이터 유지 |
 | v0.2.1·v0.2.2 | `5b7e5c149279` | v0.2.3의 Labs 정책·Inbox 인덱스와 v0.3.1 migration 적용 |
 | v0.2.3·v0.2.4 | `00ba02774c4a` | v0.3.1의 단일 migration 적용 |
+| v0.3.1 | `c3d2e4f601ab` | 기존 schema 사용 |
 
 ```text
 기존 배포본: efcbcf724889 (0.1.2) → 19db79d3e622 (0.1.3)
