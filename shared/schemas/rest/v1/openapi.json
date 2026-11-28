@@ -4415,6 +4415,21 @@
             "title": "Idempotency Key",
             "type": "string"
           },
+          "new_draft_key": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._:-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One key per editor session. Saves and begin-edit calls that start a draft from a finished version with the same key reach one draft.",
+            "title": "New Draft Key"
+          },
           "on_conflict": {
             "anyOf": [
               {
@@ -19085,6 +19100,21 @@
             "pattern": "^[A-Za-z0-9._:-]+$",
             "title": "Idempotency Key",
             "type": "string"
+          },
+          "new_draft_key": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._:-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One key per editor session. Saves and begin-edit calls that start a draft from a finished version with the same key reach one draft.",
+            "title": "New Draft Key"
           },
           "on_conflict": {
             "anyOf": [

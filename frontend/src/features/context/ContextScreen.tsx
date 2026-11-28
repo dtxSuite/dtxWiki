@@ -57,7 +57,6 @@ import {
   type LibraryItemTombstone,
 } from "../../shared/api/library";
 import {
-  beginPageEdit,
   diffPageVersions,
   discardPageEdit,
   restorePageVersion,
@@ -3751,7 +3750,6 @@ export function ContextHistory({
   // One restore at a time across the whole list, not just per row.
   const restoring = restoreVersionId !== null;
   const navigate = useNavigate();
-  const [startingVersionId, setStartingVersionId] = useState<string | null>(null);
   const [discardVersionId, setDiscardVersionId] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState(false);
   const versions = useMemo(() => history?.versions ?? [], [history?.versions]);
@@ -3821,7 +3819,6 @@ export function ContextHistory({
     setRestoreError(null);
     setRestoreMessage(null);
     setRestoreVersionId(null);
-    setStartingVersionId(null);
     setDiscardVersionId(null);
   }, [detail.id]);
   useEffect(() => {
@@ -3875,20 +3872,18 @@ export function ContextHistory({
     }
   }
 
-  // A finished commit is a starting point: a new draft whose first parent is
-  // that commit, opened in the editor.
-  async function startFrom(entry: VersionEntry) {
-    if (!workspaceId || startingVersionId) return;
-    setRestoreError(null);
-    setStartingVersionId(entry.version_id);
-    try {
-      const draft = await beginPageEdit(workspaceId, detail.id, entry.version_id);
-      navigate(`${contextEditHref(workspaceId, detail.id)}?version_id=${encodeURIComponent(draft.version_id)}`);
-    } catch (exc) {
-      setRestoreError(apiErrorMessage(exc, t("history.failedStartFrom")));
-    } finally {
-      setStartingVersionId(null);
-    }
+  // A finished commit is a starting point: the editor opens it, and the first
+  // saved change starts a draft whose first parent is that commit.
+  function startFrom(entry: VersionEntry) {
+    if (!workspaceId) return;
+    navigate(`${contextEditHref(workspaceId, detail.id)}?start_from=${encodeURIComponent(entry.version_id)}`);
+  }
+
+  // Edit opens the latest draft that contains the published version; any
+  // other open draft is edited by choosing it here.
+  function editDraft(entry: VersionEntry) {
+    if (!workspaceId) return;
+    navigate(`${contextEditHref(workspaceId, detail.id)}?version_id=${encodeURIComponent(entry.version_id)}`);
   }
 
   // Discarding the draft on screen returns to the published version, as the
@@ -3951,15 +3946,17 @@ export function ContextHistory({
             {canEdit && isContextCommit(entry.version_status) ? (
               <HistoryActionButton
                 accessibleLabel={t("history.startFromLabel", { version: entry.version_no })}
-                busy={startingVersionId === entry.version_id}
-                disabled={startingVersionId !== null}
                 icon={GitBranch}
-                label={
-                  startingVersionId === entry.version_id
-                    ? t("history.startingFrom")
-                    : t("history.startFrom")
-                }
-                onClick={() => void startFrom(entry)}
+                label={t("history.startFrom")}
+                onClick={() => startFrom(entry)}
+              />
+            ) : null}
+            {canEdit && entry.version_status === "draft" ? (
+              <HistoryActionButton
+                accessibleLabel={t("history.editDraftLabel", { version: entry.version_no })}
+                icon={Edit}
+                label={t("history.editDraft")}
+                onClick={() => editDraft(entry)}
               />
             ) : null}
             {/* Offered whenever the parent is visible, even when it is on an

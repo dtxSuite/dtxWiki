@@ -1,5 +1,6 @@
 import { ApiError, apiRequest, getApiBaseUrl, getApiToken } from "./client";
 import type { components, paths } from "./types.gen";
+import { listContextDrafts } from "./context";
 
 // P8.5: one idempotency key per autosave attempt, generated before the first
 // send (a retry reuses the same key; a new edit generates a new one). Falls
@@ -181,22 +182,63 @@ export class PageEditingUnavailableError extends Error {
   }
 }
 
-// Published versions are read-only entry points until the first save starts a
-// draft. Explicit shared drafts and never-published pages join the existing
-// draft; an ended draft named from history starts a new one when opened.
-export async function readEditablePage(workspaceId: string, id: string, versionId?: string) {
-  const selected = await readPage(workspaceId, id, versionId);
-  const joinsDraft = selected.version_status === "draft" && (versionId || !selected.current_published_version_id);
-  const endedDraft = Boolean(versionId) &&
-    (selected.version_status === "closed" || selected.version_status === "discarded");
-  return joinsDraft || endedDraft ? beginPageEdit(workspaceId, selected.id, selected.version_id) : selected;
+type PageDetail = Awaited<ReturnType<typeof readPage>>;
+
+/**
+ * What the editor opens, the ended draft an editing link named instead, and
+ * the number of the open draft it joined (when the draft list gave one).
+ */
+export type EditableEntry = { page: PageDetail; ended: PageDetail | null; draftNo: number | null };
+
+// Opening the editor writes nothing: the first saved change starts a draft.
+// A named open draft is edited as it is, and a version chosen to start from
+// (History) is the starting point. Every other entry -- none named, a finished
+// version, or an ended draft -- joins the most recently saved open draft that
+// already contains the published version, or else starts from the published
+// version. Drafts started from older versions are opened only by name.
+export async function readEditablePage(
+  workspaceId: string,
+  id: string,
+  { versionId, startFrom }: { versionId?: string; startFrom?: string } = {},
+): Promise<EditableEntry> {
+  if (startFrom) return { page: await readPage(workspaceId, id, startFrom), ended: null, draftNo: null };
+  const named = versionId ? await readPage(workspaceId, id, versionId) : null;
+  if (named?.version_status === "draft") return { page: named, ended: null, draftNo: null };
+  const ended = named?.version_status === "closed" || named?.version_status === "discarded" ? named : null;
+  const current = await readPage(workspaceId, id);
+  let drafts = current.open_drafts ?? null;
+  let joined = drafts?.items?.find((draft) => draft.is_behind === false) ?? null;
+  while (!joined && drafts?.next_cursor) {
+    drafts = await listContextDrafts(workspaceId, current.id, drafts.next_cursor);
+    joined = drafts.items?.find((draft) => draft.is_behind === false) ?? null;
+  }
+  if (!joined || joined.version_id === current.version_id) {
+    return { page: current, ended, draftNo: joined?.version_no ?? null };
+  }
+  const draft = await readPage(workspaceId, id, joined.version_id);
+  // Ended between the list and this read: start from the published version.
+  if (draft.version_status !== "draft") return { page: current, ended, draftNo: null };
+  return { page: draft, ended, draftNo: joined.version_no };
 }
 
-/** Joins a named draft, or starts a new draft from a finished commit (or the published version). */
-export async function beginPageEdit(workspaceId: string, pageId: string, fromVersionId?: string) {
+/**
+ * Joins a named draft, or starts a new draft from a finished commit (or the
+ * published version). An editor session sends its `newDraftKey`, so this and
+ * its saves reach one draft.
+ */
+export async function beginPageEdit(
+  workspaceId: string,
+  pageId: string,
+  fromVersionId?: string,
+  newDraftKey?: string,
+) {
   const response = await apiRequest<PageResponse>(pagesPath(workspaceId, `/${pageId}/begin-edit`), {
     method: "POST",
-    body: JSON.stringify({ idempotency_key: newIdempotencyKey(), ...(fromVersionId ? { from: fromVersionId } : {}) }),
+    body: JSON.stringify({
+      idempotency_key: newIdempotencyKey(),
+      ...(fromVersionId ? { from: fromVersionId } : {}),
+      ...(newDraftKey ? { new_draft_key: newDraftKey } : {}),
+    }),
   });
   return response.data;
 }

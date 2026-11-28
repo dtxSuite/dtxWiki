@@ -5369,6 +5369,11 @@ export interface components {
              * @description 24-hour retry key scoped to actor, workspace, and command. Generate and hold it before the first send.
              */
             idempotency_key: string;
+            /**
+             * New Draft Key
+             * @description One key per editor session. Saves and begin-edit calls that start a draft from a finished version with the same key reach one draft.
+             */
+            new_draft_key?: string | null;
             /** On Conflict */
             on_conflict?: ("keep_both" | "latest") | null;
             /**
@@ -10599,6 +10604,11 @@ export interface components {
              * @description 24-hour retry key scoped to actor, workspace, and command. Generate and hold it before the first send.
              */
             idempotency_key: string;
+            /**
+             * New Draft Key
+             * @description One key per editor session. Saves and begin-edit calls that start a draft from a finished version with the same key reach one draft.
+             */
+            new_draft_key?: string | null;
             /** On Conflict */
             on_conflict?: ("keep_both" | "latest") | null;
             /**

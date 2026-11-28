@@ -78,23 +78,34 @@ describe("pages api", () => {
     vi.restoreAllMocks();
   });
 
-  it("joins existing work on a never-published page without an edit-head pointer", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(
-      JSON.stringify({ data: pageDetail({
-        current_version_id: null,
-        current_published_version_id: null,
-        body_md: "# Hello\n\nExisting shared work.",
-      }) }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    ));
-    const draft = await readEditablePage(WORKSPACE_ID, "p1");
-    expect(draft.version_id).toBe("v1");
-    expect(draft.body_md).toContain("Existing shared work.");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[1][0])).toContain("/p1/begin-edit");
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({
-      idempotency_key: expect.any(String), from: "v1",
+  it("opens the latest open draft containing the published version, writing nothing", async () => {
+    // An editing link to an ended draft: the newest open draft started from an
+    // older version is skipped, and every request is a read.
+    const draft = (id: string, isBehind: boolean, versionNo: number) => ({
+      version_id: id, version_no: versionNo, version_status: "draft", is_behind: isBehind, is_mine: false,
+      state: "writing", is_editing: true, last_saved_at: "2026-05-08T00:00:00Z", parent_version_ids: [],
+      author: { actor_kind: "human", actor_id: "u2" },
     });
+    const bodies: Record<string, unknown> = {
+      "/p1?version_id=v7": pageDetail({ version_id: "v7", version_status: "closed", closed_reason: "merged" }),
+      "/p1": pageDetail({
+        version_id: "v9", version_status: "published_snapshot", current_published_version_id: "v9",
+        open_drafts: { total: 2, items: [draft("v11", true, 11), draft("v10", false, 10)] },
+      }),
+      "/p1?version_id=v10": pageDetail({ version_id: "v10", body_md: "# Hello\n\nShared work." }),
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      return new Response(JSON.stringify({ data: bodies[`${url.pathname.slice(url.pathname.lastIndexOf("/"))}${url.search}`] }),
+        { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    const entry = await readEditablePage(WORKSPACE_ID, "p1", { versionId: "v7" });
+    expect(entry.page.version_id).toBe("v10");
+    expect(entry.page.body_md).toContain("Shared work.");
+    expect(entry.ended?.closed_reason).toBe("merged");
+    expect(entry.draftNo).toBe(10);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method ?? "GET")).toEqual(["GET", "GET", "GET"]);
   });
 
   it("reads a published commit on entry and URL re-entry without creating a draft", async () => {
@@ -104,14 +115,15 @@ describe("pages api", () => {
       { status: 200, headers: { "Content-Type": "application/json" } },
     ));
     const selected = await readEditablePage(WORKSPACE_ID, "p1");
-    expect(selected).toEqual(published);
+    expect(selected).toEqual({ page: published, ended: null, draftNo: null });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][1]?.method ?? "GET").toBe("GET");
-    // The editor puts the selected commit in the URL; re-entry still only reads it.
-    await expect(readEditablePage(WORKSPACE_ID, "p1", selected.version_id)).resolves.toEqual(published);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The editor puts the selected commit in the URL; re-entry still only reads.
+    await expect(readEditablePage(WORKSPACE_ID, "p1", { versionId: selected.page.version_id }))
+      .resolves.toEqual({ page: published, ended: null, draftNo: null });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(String(fetchMock.mock.calls[1][0])).toContain("/p1?version_id=v1");
-    expect(fetchMock.mock.calls[1][1]?.method ?? "GET").toBe("GET");
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method ?? "GET")).toEqual(["GET", "GET", "GET"]);
   });
 
   it("sends cookie credentials and create payload", async () => {

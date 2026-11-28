@@ -486,7 +486,8 @@ export function RoutedPageEditor(props: PageEditorProps) {
   const pageId = route?.targetKind === "page" ? route.targetId ?? "" : "";
   const [params] = useSearchParams();
   const versionId = params.get("version_id") ?? "";
-  return <PageEditor key={`${route?.workspaceId ?? ""}:${props.mode}:${pageId}:${versionId}`} {...props} />;
+  const startFrom = params.get("start_from") ?? "";
+  return <PageEditor key={`${route?.workspaceId ?? ""}:${props.mode}:${pageId}:${versionId}:${startFrom}`} {...props} />;
 }
 
 export function PageEditor({
@@ -884,6 +885,8 @@ export function PageEditor({
     suggestLinkParam && isContextId(suggestLinkParam) ? suggestLinkParam : null;
   const createInitialTitle = mode === "create" ? normalizeInitialTitle(searchParams.get("title")) : "";
   const selectedEditVersionId = searchParams.get("version_id") ?? undefined;
+  // History "Start from this version": the version a new draft starts from.
+  const startFromVersionId = mode === "edit" ? searchParams.get("start_from") ?? undefined : undefined;
   const isLinkDialogOpen = Boolean(linkDialog);
   const isCommentPreviewOpen = Boolean(commentPreview);
   const isCurrentUploadTarget = useCallback((snapshot: UploadTargetSnapshot) => {
@@ -894,6 +897,18 @@ export function PageEditor({
       snapshot.pageId === pageIdRef.current &&
       snapshot.editingVersionId === baseVersionIdRef.current
     );
+  }, []);
+  // One key per editor session and finished starting version: every request
+  // that may start a draft from it (saves, the close-time backstop, retries,
+  // uploads) reaches the one draft the first of them starts.
+  const newDraftKeyRef = useRef<{ source: string; key: string } | null>(null);
+  const startingFromEndedRef = useRef(false);
+  const newDraftKeyFor = useCallback((base: { version_id: string; version_status?: string | null }) => {
+    if (!isFinishedVersion(base)) return undefined;
+    if (newDraftKeyRef.current?.source !== base.version_id) {
+      newDraftKeyRef.current = { source: base.version_id, key: newIdempotencyKey() };
+    }
+    return newDraftKeyRef.current.key;
   }, []);
   // Adopt server concurrency metadata immediately, including before React renders.
   const adoptEditablePage = useCallback((updated: PagePayload) => {
@@ -907,9 +922,14 @@ export function PageEditor({
     sessionVersionIdRef.current = updated.version_id;
     draftBaseSnapshotRef.current = draftBaseSnapshotOf(updated);
     setPage(updated);
+    // The key has started its draft. Starting from a finished version again
+    // later (after this draft ended) is a new start with a new key.
+    if (updated.version_status === "draft") newDraftKeyRef.current = null;
     if (mode === "edit") {
       const url = new URL(window.location.href);
       url.searchParams.set("version_id", updated.version_id);
+      // The draft now exists: reopening the link edits it.
+      if (updated.version_status === "draft") url.searchParams.delete("start_from");
       window.history.replaceState(window.history.state, "", url);
     }
   }, [mode]);
@@ -926,7 +946,7 @@ export function PageEditor({
     if (editableDraftPromiseRef.current) return editableDraftPromiseRef.current;
     const current = editablePageRef.current?.id === selected.id ? editablePageRef.current : selected;
     if (current.version_status === "draft") return current;
-    const promise = beginPageEdit(workspace, current.id, current.version_id).then((draft) => {
+    const promise = beginPageEdit(workspace, current.id, current.version_id, newDraftKeyFor(current)).then((draft) => {
       if (!isEditorMountedRef.current || workspaceIdRef.current !== workspace ||
           editorGenerationRef.current !== generation || pageIdRef.current !== current.id) {
         throw new DOMException("Editor is no longer current.", "AbortError");
@@ -945,7 +965,7 @@ export function PageEditor({
     });
     editableDraftPromiseRef.current = tracked;
     return tracked;
-  }, [adoptEditablePage, mode, slug]);
+  }, [adoptEditablePage, mode, newDraftKeyFor, slug]);
   const closeContextRail = useCallback(() => setContextRailOpen(false), []);
   const imageUploadOptions = useMemo<EditorPasteOptions>(() => ({
     getWorkspaceId: () => workspaceIdRef.current,
@@ -1503,9 +1523,9 @@ export function PageEditor({
     editorOpenReviewIdRef.current = editorOpenReviewId;
   }, [editorOpenReviewId, shownEditorMerge]);
   // Existing drafts use server eligibility; a commit first starts a draft on request.
+  // Only a draft holds changes to review; with nothing changed there is none.
   const canRequestReview = canSave && saveState === "clean" && !conflict &&
-    Boolean(page && (page.version_status === "draft" ? page.can_submit_for_review :
-      workspaceRole === "owner" || workspaceRole === "editor"));
+    page?.version_status === "draft" && Boolean(page.can_submit_for_review);
   const activeEditorMode =
     singlePaneViewport && editorMode === "split" ? "source" : editorMode;
   const showSourcePane = activeEditorMode !== "reading";
@@ -2083,10 +2103,13 @@ export function PageEditor({
             }
           }
         }
-        const loaded = selectedWorkspaceId
-          ? await readEditablePage(selectedWorkspaceId, pageId, selectedEditVersionId)
+        const entry = selectedWorkspaceId
+          ? await readEditablePage(selectedWorkspaceId, pageId, {
+            versionId: selectedEditVersionId, startFrom: startFromVersionId,
+          })
           : null;
         if (cancelled) return;
+        const loaded = entry?.page ?? null;
         if (!loaded) {
           setPageLoadState("not_found");
           setStatus(translationRef.current("editor.notFound"));
@@ -2108,12 +2131,25 @@ export function PageEditor({
         pageIdRef.current = loaded.id;
         setPage(loaded);
         setEditorReview(openReviewOf(loaded));
-        setDraftContainsChanges(Boolean(selectedEditVersionId));
+        setDraftContainsChanges(loaded.version_status === "draft");
         draftBaseSnapshotRef.current = draftBaseSnapshotOf(loaded);
-        if (!selectedEditVersionId) {
+        if (!startFromVersionId) {
           const url = new URL(window.location.href);
           url.searchParams.set("version_id", loaded.version_id);
           window.history.replaceState(window.history.state, "", url);
+        }
+        if (!entry?.ended && entry?.draftNo != null) {
+          setStatus(translationRef.current("editor.joinedDraft", { version: entry.draftNo }));
+        }
+        if (entry?.ended) {
+          setStatus(translationRef.current("editor.endedDraftOpened", {
+            reason: translationRef.current(`editor.endedDraftReason.${entry.ended.closed_reason ?? "discarded"}`),
+            opened: loaded.version_status !== "draft"
+              ? translationRef.current("editor.openedPublished")
+              : entry.draftNo != null
+                ? translationRef.current("editor.openedDraft", { version: entry.draftNo })
+                : translationRef.current("editor.openedLatestDraft"),
+          }));
         }
         showEditorContent(content);
         markEditorContentSaved(content.draft);
@@ -2149,7 +2185,7 @@ export function PageEditor({
     return () => {
       cancelled = true;
     };
-  }, [createInitialTitle, createParentNodeId, mode, pageId, routeWorkspaceId, slug, selectedEditVersionId, publicationKey, pendingPublication, clearPendingPublication, navigate, showEditorContent, markEditorContentSaved]);
+  }, [createInitialTitle, createParentNodeId, mode, pageId, routeWorkspaceId, slug, selectedEditVersionId, startFromVersionId, publicationKey, pendingPublication, clearPendingPublication, navigate, showEditorContent, markEditorContentSaved]);
 
   useEffect(() => {
     if (mode === "create") {
@@ -3219,7 +3255,7 @@ export function PageEditor({
     const dispatchedFingerprint = fingerprintOf(dispatchedDraft);
     const contentUnchanged =
       dispatchedFingerprint === lastSavedFingerprintRef.current &&
-      !(source === "manual" && page?.block_map_stale);
+      !(source === "manual" && page?.version_status === "draft" && page.block_map_stale);
     if (
       contentUnchanged &&
       (source === "auto" || !page || publicationState === "published")
@@ -3405,6 +3441,7 @@ export function PageEditor({
         base_snapshot: draftBaseSnapshotRef.current ?? draftBaseSnapshotOf(saveBase),
         destination_node_id: submittedDraft.destinationNodeId || null,
         idempotency_key: newIdempotencyKey(),
+        new_draft_key: newDraftKeyFor(saveBase),
         on_stale: "conflict" as const,
         retry_only: false,
       };
@@ -3417,7 +3454,13 @@ export function PageEditor({
       finally { if (autosavePromiseRef.current === autosave) autosavePromiseRef.current = null; }
       if (!isCurrentSaveRequest(requestId, saveRequestIdRef)) return;
       if (!isEditorMountedRef.current) return;
-      adoptEditablePage(updated);
+      // A save that changed nothing returns the finished version unchanged:
+      // no draft was started, so the editor stays where it was.
+      const startedDraft = !isFinishedVersion(updated);
+      if (startedDraft) adoptEditablePage(updated);
+      if (startedDraft && isFinishedVersion(saveBase)) {
+        setStatus(t("editor.draftStarted"));
+      }
       // Preserve the withdrawal notice if another operation superseded the review.
       const supersededReviewByEdit =
         fromReview &&
@@ -3432,9 +3475,11 @@ export function PageEditor({
         setStatus(t("editor.reviewRequestWithdrawn"));
       }
       setSaveRelativeNow(Date.now());
-      setPublicationState((current) =>
-        current === "never-published" ? "never-published" : "staged",
-      );
+      if (startedDraft) {
+        setPublicationState((current) =>
+          current === "never-published" ? "never-published" : "staged",
+        );
+      }
       // I7 note: the server may have normalized the body (Auto-fix on save). We
       // deliberately do NOT re-seed the editor from updated.body_md here —
       // doing so resets the cursor mid-autosave and, because the draft
@@ -3465,7 +3510,7 @@ export function PageEditor({
       if (editorRevisionRef.current > acknowledgedRevisionRef.current) {
         return;
       }
-      if (source === "auto") {
+      if (source === "auto" || !startedDraft) {
         return;
       }
       if (!options.publish) {
@@ -3756,6 +3801,7 @@ export function PageEditor({
         base_snapshot: draftBaseSnapshotRef.current ?? draftBaseSnapshotOf(saveBase),
         destination_node_id: draft.destinationNodeId || null,
         idempotency_key: newIdempotencyKey(),
+        new_draft_key: newDraftKeyFor(saveBase),
         on_stale: "conflict",
         retry_only: false,
       });
@@ -3809,6 +3855,8 @@ export function PageEditor({
       editablePageRef.current = {
         ...base,
         version_id: server.version_id,
+        // The merge was computed against a draft, whatever the editor opened.
+        version_status: "draft",
         editing_revision: overlap.server_editing_revision,
         content_hash: server.content_hash,
       };
@@ -3846,10 +3894,14 @@ export function PageEditor({
 
   async function startFromEndedDraft() {
     const pageId = pageIdRef.current ?? page?.id;
-    if (!workspaceId || !pageId || conflict?.kind !== "ended" || savingRef.current) return;
+    if (!workspaceId || !pageId || conflict?.kind !== "ended" || savingRef.current ||
+        startingFromEndedRef.current) return;
+    startingFromEndedRef.current = true;
     try {
       const sessionBase = draftBaseSnapshotRef.current;
-      const draft = await beginPageEdit(workspaceId, pageId, conflict.endedVersionId);
+      // A retry after a lost response reaches the draft the first try started.
+      const draft = await beginPageEdit(workspaceId, pageId, conflict.endedVersionId,
+        newDraftKeyFor({ version_id: conflict.endedVersionId, version_status: "closed" }));
       adoptEditablePage(draft);
       // The editor's own base stays, so the server merges this session's
       // changes onto the ended draft instead of overwriting it.
@@ -3857,6 +3909,8 @@ export function PageEditor({
       await saveAndCombine();
     } catch (error) {
       setStatus(apiErrorMessage(error, t("editor.saveFailed")));
+    } finally {
+      startingFromEndedRef.current = false;
     }
   }
 
@@ -5316,8 +5370,11 @@ export function PageEditor({
     />
   );
   const draftSaving = saveState === "saving" || saveState === "saving_with_newer_edits";
+  // Re-saving rebuilds a draft's stale block map. A finished version is not
+  // copied into a draft for it: nothing changed, so nothing is started.
+  const staleDraftBlockMap = page?.version_status === "draft" && Boolean(page.block_map_stale);
   const canSaveDraft = !saveBlockedReason && (
-    saveState === "dirty" || (saveState === "clean" && Boolean(page?.block_map_stale))
+    saveState === "dirty" || (saveState === "clean" && staleDraftBlockMap)
   );
   const renderSyncPill = (compact: boolean) => (
     <SyncPill
@@ -5330,6 +5387,11 @@ export function PageEditor({
       onRetry={() => void save({ publish: hasPreparedPublication })}
       blockedReason={saveBlockedReason}
       compact={compact}
+      startingFrom={page && isFinishedVersion(page)
+        ? page.version_id === page.current_published_version_id
+          ? { publishedVersionNo: page.published_version_no ?? null }
+          : { publishedVersionNo: null }
+        : null}
     />
   );
   const closeEditorButton = (
@@ -5644,7 +5706,7 @@ export function PageEditor({
             })}
           </StatusBanner>
         ) : null}
-        {page?.block_map_stale ? (
+        {staleDraftBlockMap ? (
           <StatusBanner tone="warning">{t("editor.blockMapStaleWarning")}</StatusBanner>
         ) : null}
         {stalePublishState !== "idle" ? (
@@ -7021,6 +7083,7 @@ function SyncPill({
   onRetry,
   blockedReason: _blockedReason = null,
   compact = false,
+  startingFrom = null,
 }: {
   state: SaveState;
   publicationState: PublicationState;
@@ -7032,6 +7095,11 @@ function SyncPill({
   blockedReason?: string | null;
   /** The compact top row may reduce the message to its icon, so every state has one. */
   compact?: boolean;
+  /**
+   * The finished version on screen (its number when it is the published one);
+   * the first saved change starts a draft from it.
+   */
+  startingFrom?: { publishedVersionNo: number | null } | null;
 }) {
   const { t } = useTranslation("pages");
   const savedJustNow = isRecentTimestamp(lastSavedAt, _now);
@@ -7101,6 +7169,18 @@ function SyncPill({
         {compact ? <Pencil {...iconProps} /> : null}
         <span className="sync-pill-text">
           {t("editor.syncPillEditing", { defaultValue: "Editing" })}
+        </span>
+      </span>
+    );
+  }
+  if (state === "clean" && hasPersistedPage && startingFrom) {
+    return (
+      <span className="sync-pill" {...statusProps}>
+        {compact ? <CircleDashed {...iconProps} /> : null}
+        <span className="sync-pill-text">
+          {startingFrom.publishedVersionNo != null
+            ? t("editor.syncPillStartsFromPublished", { version: startingFrom.publishedVersionNo })
+            : t("editor.syncPillStartsFromVersion")}
         </span>
       </span>
     );
@@ -7468,6 +7548,11 @@ function isRecentTimestamp(timestamp: string | null, now: number) {
   }
   const parsed = Date.parse(timestamp);
   return Number.isFinite(parsed) && now - parsed >= 0 && now - parsed < SAVED_JUST_NOW_MS;
+}
+
+/** A published, earlier or ended version: saving a change onto it starts a draft. */
+function isFinishedVersion(page: { version_status?: string | null }) {
+  return Boolean(page.version_status) && page.version_status !== "draft";
 }
 
 function readPagePublicationState(page: PagePayload): {

@@ -540,3 +540,91 @@ def test_two_editors_merge_browser_baseline_but_mcp_requires_current_revision(
     assert again["autosave_merged"] is True
     assert "Last moved by owner." in again["body_md"]
     assert "First rewritten by peer." in again["body_md"]
+
+
+def test_finished_version_starts_one_draft_per_session_and_none_unchanged(
+    page_service,
+):
+    # One traversal: a save onto a finished version that changes nothing
+    # starts no draft, and one editor session's requests (a close-time save and
+    # its backstop, a later save, an upload's begin-edit) reach the one draft
+    # its first change started. Each request carries its own retry key, so the
+    # ledger of the outer command cannot make them agree.
+    from backend.services.context_draft_workflow import metadata_dict, metadata_for
+
+    actor = str(uuid4())
+    initial = page_service.write_page(
+        workspace_slug="default",
+        slug="one-session-draft",
+        title="One session",
+        body_md="# One session\n\nFirst paragraph.\n\nLast paragraph.\n",
+        actor_kind="human",
+        actor_id=actor,
+        actor_provenance="browser_session",
+    )
+    with page_service.session_factory() as session:
+        workspace_id = session.scalar(
+            select(Workspace.id).where(Workspace.slug == "default")
+        )
+        published = session.get(ContextPageVersion, initial.version_id)
+        baseline = {
+            "body_md": published.body_md,
+            "page_metadata": metadata_dict(metadata_for(published.page, published)),
+        }
+    session_key = str(uuid4())
+
+    def save(body, **changes):
+        return page_service.autosave_page(
+            page_id=initial.id,
+            workspace_id=workspace_id,
+            title=initial.title,
+            body_md=body,
+            actor_kind="human",
+            actor_id=actor,
+            base_version_id=initial.version_id,
+            base_content_hash=initial.content_hash,
+            actor_provenance="browser_session",
+            idempotency_key=str(uuid4()),
+            expected_editing_revision=initial.editing_revision,
+            version_id=initial.version_id,
+            base_snapshot=baseline,
+            **changes,
+        )
+
+    def drafts():
+        with page_service.session_factory() as session:
+            return session.scalars(
+                select(ContextPageVersion.id).where(
+                    ContextPageVersion.page_id == initial.id,
+                    ContextPageVersion.version_status == "draft",
+                )
+            ).all()
+
+    assert save(initial.body_md).version_id == initial.version_id
+    assert save(initial.body_md, new_draft_key=session_key).version_id == (
+        initial.version_id
+    )
+    assert drafts() == []
+
+    edited = initial.body_md.replace("First paragraph.", "First edited.")
+    first = save(edited, new_draft_key=session_key)
+    backstop = save(edited, new_draft_key=session_key)
+    later = save(
+        edited.replace("Last paragraph.", "Last edited."), new_draft_key=session_key
+    )
+    upload = page_service.begin_context_edit(
+        initial.id,
+        workspace_id,
+        "human",
+        actor,
+        "browser_session",
+        str(uuid4()),
+        from_version_id=initial.version_id,
+        new_draft_key=session_key,
+    )
+    assert first.version_status == "draft"
+    assert {backstop.version_id, later.version_id, upload.version_id} == {
+        first.version_id
+    }
+    assert drafts() == [first.version_id]
+    assert "First edited." in upload.body_md and "Last edited." in upload.body_md

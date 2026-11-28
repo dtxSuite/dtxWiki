@@ -672,6 +672,7 @@ def begin_context_edit(
             base_version_id=request_body.base_version_id,
             base_content_hash=request_body.base_content_hash,
             retry_only=request_body.retry_only,
+            new_draft_key=request_body.new_draft_key,
         )
     except PageServiceError as exc:
         return service_error_response(exc)
@@ -914,6 +915,7 @@ def autosave_page(
             on_stale=request_body.on_stale,
             destination_node_id=request_body.destination_node_id,
             retry_only=request_body.retry_only,
+            new_draft_key=request_body.new_draft_key,
         )
     except PageServiceError as exc:
         return service_error_response(exc)
