@@ -280,6 +280,7 @@
     "openedDraft": "the latest draft v{{version}}",
     "openedLatestDraft": "the latest draft",
     "openedPublished": "the published version",
+    "joinedDraft": "Continuing the latest draft v{{version}}.",
     "syncPillStartsFromPublished": "Published v{{version}} · your first change starts a draft",
     "syncPillStartsFromVersion": "Earlier version · your first change starts a draft",
     "endedDraftReason": {

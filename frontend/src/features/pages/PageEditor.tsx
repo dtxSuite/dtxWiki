@@ -486,7 +486,8 @@ export function RoutedPageEditor(props: PageEditorProps) {
   const pageId = route?.targetKind === "page" ? route.targetId ?? "" : "";
   const [params] = useSearchParams();
   const versionId = params.get("version_id") ?? "";
-  return <PageEditor key={`${route?.workspaceId ?? ""}:${props.mode}:${pageId}:${versionId}`} {...props} />;
+  const startFrom = params.get("start_from") ?? "";
+  return <PageEditor key={`${route?.workspaceId ?? ""}:${props.mode}:${pageId}:${versionId}:${startFrom}`} {...props} />;
 }
 
 export function PageEditor({
@@ -901,6 +902,7 @@ export function PageEditor({
   // that may start a draft from it (saves, the close-time backstop, retries,
   // uploads) reaches the one draft the first of them starts.
   const newDraftKeyRef = useRef<{ source: string; key: string } | null>(null);
+  const startingFromEndedRef = useRef(false);
   const newDraftKeyFor = useCallback((base: { version_id: string; version_status?: string | null }) => {
     if (!isFinishedVersion(base)) return undefined;
     if (newDraftKeyRef.current?.source !== base.version_id) {
@@ -920,6 +922,9 @@ export function PageEditor({
     sessionVersionIdRef.current = updated.version_id;
     draftBaseSnapshotRef.current = draftBaseSnapshotOf(updated);
     setPage(updated);
+    // The key has started its draft. Starting from a finished version again
+    // later (after this draft ended) is a new start with a new key.
+    if (updated.version_status === "draft") newDraftKeyRef.current = null;
     if (mode === "edit") {
       const url = new URL(window.location.href);
       url.searchParams.set("version_id", updated.version_id);
@@ -2132,6 +2137,9 @@ export function PageEditor({
           const url = new URL(window.location.href);
           url.searchParams.set("version_id", loaded.version_id);
           window.history.replaceState(window.history.state, "", url);
+        }
+        if (!entry?.ended && entry?.draftNo != null) {
+          setStatus(translationRef.current("editor.joinedDraft", { version: entry.draftNo }));
         }
         if (entry?.ended) {
           setStatus(translationRef.current("editor.endedDraftOpened", {
@@ -3847,6 +3855,8 @@ export function PageEditor({
       editablePageRef.current = {
         ...base,
         version_id: server.version_id,
+        // The merge was computed against a draft, whatever the editor opened.
+        version_status: "draft",
         editing_revision: overlap.server_editing_revision,
         content_hash: server.content_hash,
       };
@@ -3884,10 +3894,14 @@ export function PageEditor({
 
   async function startFromEndedDraft() {
     const pageId = pageIdRef.current ?? page?.id;
-    if (!workspaceId || !pageId || conflict?.kind !== "ended" || savingRef.current) return;
+    if (!workspaceId || !pageId || conflict?.kind !== "ended" || savingRef.current ||
+        startingFromEndedRef.current) return;
+    startingFromEndedRef.current = true;
     try {
       const sessionBase = draftBaseSnapshotRef.current;
-      const draft = await beginPageEdit(workspaceId, pageId, conflict.endedVersionId);
+      // A retry after a lost response reaches the draft the first try started.
+      const draft = await beginPageEdit(workspaceId, pageId, conflict.endedVersionId,
+        newDraftKeyFor({ version_id: conflict.endedVersionId, version_status: "closed" }));
       adoptEditablePage(draft);
       // The editor's own base stays, so the server merges this session's
       // changes onto the ended draft instead of overwriting it.
@@ -3895,6 +3909,8 @@ export function PageEditor({
       await saveAndCombine();
     } catch (error) {
       setStatus(apiErrorMessage(error, t("editor.saveFailed")));
+    } finally {
+      startingFromEndedRef.current = false;
     }
   }
 

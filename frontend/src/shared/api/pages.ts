@@ -212,9 +212,13 @@ export async function readEditablePage(
     drafts = await listContextDrafts(workspaceId, current.id, drafts.next_cursor);
     joined = drafts.items?.find((draft) => draft.is_behind === false) ?? null;
   }
-  const draftNo = joined?.version_no ?? null;
-  if (!joined || joined.version_id === current.version_id) return { page: current, ended, draftNo };
-  return { page: await readPage(workspaceId, id, joined.version_id), ended, draftNo };
+  if (!joined || joined.version_id === current.version_id) {
+    return { page: current, ended, draftNo: joined?.version_no ?? null };
+  }
+  const draft = await readPage(workspaceId, id, joined.version_id);
+  // Ended between the list and this read: start from the published version.
+  if (draft.version_status !== "draft") return { page: current, ended, draftNo: null };
+  return { page: draft, ended, draftNo: joined.version_no };
 }
 
 /**

@@ -280,6 +280,7 @@
     "openedDraft": "최신 초안 v{{version}}",
     "openedLatestDraft": "최신 초안",
     "openedPublished": "게시본",
+    "joinedDraft": "최신 초안 v{{version}}을 이어서 편집합니다.",
     "syncPillStartsFromPublished": "게시본 v{{version}} · 고치면 새 초안이 생깁니다",
     "syncPillStartsFromVersion": "이전 버전에서 시작 · 고치면 새 초안이 생깁니다",
     "endedDraftReason": {
