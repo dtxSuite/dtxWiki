@@ -276,8 +276,8 @@
     },
     "startFrom": "Start from this version",
     "startFromLabel": "Start a new draft from v{{version}}",
-    "startingFrom": "Starting draft",
-    "failedStartFrom": "Could not start a draft from this version."
+    "editDraft": "Edit this draft",
+    "editDraftLabel": "Edit draft v{{version}}"
   },
   "inspector": {
     "ariaLabel": "Context detail",

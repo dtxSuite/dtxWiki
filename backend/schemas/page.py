@@ -53,6 +53,16 @@ PAGE_LIST_CURSOR_PATTERN = r"^[A-Za-z0-9_-]+={0,2}$"
 # `backend.mcp.protocol.tool_descriptors.IDEMPOTENCY_KEY_FIELD` so a client
 # can mint one key shape across Browser and MCP.
 IDEMPOTENCY_KEY_PATTERN = r"^[A-Za-z0-9._:-]+$"
+NEW_DRAFT_KEY_FIELD = Field(
+    default=None,
+    min_length=1,
+    max_length=160,
+    pattern=IDEMPOTENCY_KEY_PATTERN,
+    description=(
+        "One key per editor session. Saves and begin-edit calls that start a "
+        "draft from a finished version with the same key reach one draft."
+    ),
+)
 CONTEXT_COMMAND_IDEMPOTENCY_KEY_FIELD = Field(
     min_length=1,
     max_length=160,
@@ -482,6 +492,7 @@ class PageAutosaveRequest(PageUpdateRequest):
     base_snapshot: DraftBaseSnapshot | None = None
     on_conflict: Literal["keep_both", "latest"] | None = None
     expected_editing_revision: int = Field(ge=1)
+    new_draft_key: str | None = NEW_DRAFT_KEY_FIELD
 
     idempotency_key: str = CONTEXT_COMMAND_IDEMPOTENCY_KEY_FIELD
     # REST retains lookup-only retries; MCP uses get_operation_status instead.
@@ -597,6 +608,7 @@ class BeginContextEditCommand(BaseModel):
 class BeginContextEditRequest(BeginContextEditCommand):
     __doc__ = BeginContextEditCommand.__doc__
 
+    new_draft_key: str | None = NEW_DRAFT_KEY_FIELD
     retry_only: bool = False
 
 

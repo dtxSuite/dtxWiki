@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+from pydantic import BaseModel
 from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
@@ -189,6 +190,20 @@ if TYPE_CHECKING:
 SUBMIT_CONTEXT_EDIT_ACTION = "page.submit_context_edit_for_review"
 
 _UNSET = object()
+
+
+class _StartedDraft(BaseModel):
+    """The draft an editor session started, as its idempotency ledger keeps it."""
+
+    version_id: UUID
+
+
+class _NothingToSave(Exception):
+    """A save onto a finished version that changes nothing starts no draft."""
+
+    def __init__(self, prepared: PreparedBody):
+        super().__init__("nothing to save")
+        self.prepared = prepared
 
 
 class PageServiceError(Exception):
@@ -2481,6 +2496,7 @@ class PageService:
         chat_session_id: UUID | None = None,
         from_version_id: UUID | list[UUID] | None = None,
         on_conflict: str | None = None,
+        new_draft_key: str | None = None,
     ) -> PagePayload:
         """Join a named shared draft or start a new draft from immutable commits."""
         from backend.services.context_draft_workflow import (
@@ -2532,9 +2548,41 @@ class PageService:
                             server_version_id=source.id if source else None,
                             server_content_hash=source.content_hash if source else None,
                         )
-                    version = self._start_draft_from_commit(
-                        session, page, source, actor_kind=actor_kind, actor_id=actor_id
-                    )
+                    if new_draft_key is not None and len(sources) == 1:
+                        # The editor session's draft: the same one its saves
+                        # start (autosave_page), whichever request comes first.
+                        bound = execute_idempotent_write(
+                            session,
+                            workspace_id=workspace_id,
+                            actor_kind=actor_kind,
+                            actor_id=actor_id,
+                            tool_name="start_context_draft",
+                            idempotency_key=new_draft_key,
+                            fingerprint=request_fingerprint(
+                                {"page_id": page.id, "source_version_id": source.id}
+                            ),
+                            result_model=_StartedDraft,
+                            execute=lambda: _StartedDraft(
+                                version_id=self._start_draft_from_commit(
+                                    session,
+                                    page,
+                                    source,
+                                    actor_kind=actor_kind,
+                                    actor_id=actor_id,
+                                ).id
+                            ),
+                        )
+                        version = self._require_named_open_edit(
+                            session, page, bound.version_id, actor_kind, actor_id
+                        )
+                    else:
+                        version = self._start_draft_from_commit(
+                            session,
+                            page,
+                            source,
+                            actor_kind=actor_kind,
+                            actor_id=actor_id,
+                        )
                     for other in sources[1:]:
                         # The same preparation as bring-in: the merged body
                         # passes the body budget, format and media policy.
@@ -2618,6 +2666,7 @@ class PageService:
                         "base_version_id": base_version_id,
                         "base_content_hash": base_content_hash,
                         "on_conflict": on_conflict,
+                        **({"new_draft_key": new_draft_key} if new_draft_key else {}),
                     }
                 ),
                 result_model=PagePayload,
@@ -4111,6 +4160,7 @@ class PageService:
         version_id: UUID | None = None,
         base_snapshot: dict | None = None,
         on_conflict: str | None = None,
+        new_draft_key: str | None = None,
     ) -> PagePayload:
         from dataclasses import replace
 
@@ -4140,13 +4190,44 @@ class PageService:
                     raise PageValidationError("version_id is required to save a draft")
                 current = self._require_page_version(session, page, target_id)
                 expected_revision = expected_editing_revision
-                if current.version_status in {
-                    "published_snapshot",
-                    "superseded_snapshot",
-                }:
-                    # Saving onto a published version starts a draft from the
-                    # version the editor read, so opening an editor creates
-                    # nothing. An ended draft (closed, discarded) still refuses.
+
+                def prepare_on(version):
+                    prepared = self._autosave_prepare(
+                        session=session,
+                        page=page,
+                        current=version,
+                        title=title,
+                        body_md=body_md,
+                        actor_kind=actor_kind,
+                        actor_id=actor_id,
+                        page_type=page_type,
+                        tags=tags,
+                        aliases=aliases,
+                        actor_provenance=actor_provenance,
+                    )
+                    data = metadata_dict(metadata_for(page, version))
+                    data.update(
+                        {
+                            "title": prepared.metadata.title,
+                            "page_type": prepared.metadata.page_type,
+                            "tags": prepared.metadata.tags or [],
+                            "aliases": prepared.metadata.aliases or [],
+                        }
+                    )
+                    if destination_node_id is not None:
+                        data["placement_parent_node_id"] = str(destination_node_id)
+                    return prepared, data
+
+                startable = {"published_snapshot", "superseded_snapshot"}
+                if new_draft_key is not None and current.commit_oid:
+                    # An editor that opened a finished version on purpose
+                    # (History "Start from this version") may start from it.
+                    startable.add("closed")
+                if current.version_status in startable:
+                    # Saving a change onto a finished version starts a draft
+                    # from the version the editor read, so opening an editor
+                    # creates nothing. Without the editor session's key an
+                    # ended draft (closed, discarded) still refuses.
                     if expected_revision != current.editing_revision or (
                         base_content_hash is not None
                         and base_content_hash != current.content_hash
@@ -4157,38 +4238,69 @@ class PageService:
                             server_editing_revision=current.editing_revision,
                             error_code="editing_revision_conflict",
                         )
-                    current = self._start_draft_from_commit(
-                        session, page, current, actor_kind=actor_kind, actor_id=actor_id
+                    source, started = current, []
+
+                    def start_draft():
+                        prepared, data = prepare_on(source)
+                        if prepared.body == source.body_md and data == metadata_dict(
+                            metadata_for(page, source)
+                        ):
+                            # Nothing changed: no draft, and nothing to review.
+                            raise _NothingToSave(prepared)
+                        draft = self._start_draft_from_commit(
+                            session,
+                            page,
+                            source,
+                            actor_kind=actor_kind,
+                            actor_id=actor_id,
+                        )
+                        started.append(draft)
+                        return _StartedDraft(version_id=draft.id)
+
+                    try:
+                        if new_draft_key is None:
+                            bound = start_draft()
+                        else:
+                            # One editor session starts one draft: its retries,
+                            # close-time saves and uploads all land on it.
+                            bound = execute_idempotent_write(
+                                session,
+                                workspace_id=workspace_id,
+                                actor_kind=actor_kind,
+                                actor_id=actor_id,
+                                tool_name="start_context_draft",
+                                idempotency_key=new_draft_key,
+                                fingerprint=request_fingerprint(
+                                    {"page_id": page.id, "source_version_id": source.id}
+                                ),
+                                result_model=_StartedDraft,
+                                execute=start_draft,
+                            )
+                    except _NothingToSave as unchanged:
+                        result = self._payload_from_page(
+                            session, page, source, prepared=unchanged.prepared
+                        )
+                        if with_edit_receipt:
+                            result._edit_receipt = build_edit_receipt(
+                                edit_mode="whole_body",
+                                before_body=source.body_md,
+                                after_body=source.body_md,
+                                editing_revision_before=source.editing_revision,
+                                editing_revision_after=source.editing_revision,
+                                requested_body=body_md,
+                                server_fixes=unchanged.prepared.fixes,
+                            )
+                        return result
+                    current = self._require_page_version(
+                        session, page, bound.version_id
                     )
-                    expected_revision = current.editing_revision
+                    if started:
+                        expected_revision = current.editing_revision
                 current = self._require_named_open_edit(
                     session, page, current.id, actor_kind, actor_id
                 )
                 before, revision_before = current.body_md, current.editing_revision
-                prepared = self._autosave_prepare(
-                    session=session,
-                    page=page,
-                    current=current,
-                    title=title,
-                    body_md=body_md,
-                    actor_kind=actor_kind,
-                    actor_id=actor_id,
-                    page_type=page_type,
-                    tags=tags,
-                    aliases=aliases,
-                    actor_provenance=actor_provenance,
-                )
-                data = metadata_dict(metadata_for(page, current))
-                data.update(
-                    {
-                        "title": prepared.metadata.title,
-                        "page_type": prepared.metadata.page_type,
-                        "tags": prepared.metadata.tags or [],
-                        "aliases": prepared.metadata.aliases or [],
-                    }
-                )
-                if destination_node_id is not None:
-                    data["placement_parent_node_id"] = str(destination_node_id)
+                prepared, data = prepare_on(current)
                 stale = expected_revision != revision_before or (
                     base_content_hash is not None
                     and base_content_hash != current.content_hash
@@ -4352,6 +4464,8 @@ class PageService:
                         "base_content_hash": base_content_hash,
                         "base_snapshot": base_snapshot,
                         "on_conflict": on_conflict,
+                        # Only when sent, so earlier requests' retries still match.
+                        **({"new_draft_key": new_draft_key} if new_draft_key else {}),
                     }
                 ),
                 result_model=PagePayload,

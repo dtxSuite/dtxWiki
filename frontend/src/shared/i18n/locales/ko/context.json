@@ -324,8 +324,8 @@
     },
     "startFrom": "이 버전에서 시작",
     "startFromLabel": "v{{version}}에서 새 초안 시작",
-    "startingFrom": "초안 만드는 중",
-    "failedStartFrom": "이 버전에서 초안을 시작하지 못했습니다."
+    "editDraft": "이 초안 편집",
+    "editDraftLabel": "v{{version}} 초안 편집"
   },
   "drafts": {
     "count_one": "열린 초안 {{count}}개",

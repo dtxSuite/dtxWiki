@@ -275,6 +275,18 @@
     "syncPillNeverPublished": "아직 게시되지 않음",
     "syncPillDraftNeverPublished": "초안 저장됨 · 아직 게시 안 함",
     "syncPillDraftSaved": "미게시 초안 저장됨",
+    "draftStarted": "고친 내용으로 새 초안을 만들었습니다.",
+    "endedDraftOpened": "열려던 초안은 {{reason}}. 지금 편집: {{opened}}.",
+    "openedDraft": "최신 초안 v{{version}}",
+    "openedLatestDraft": "최신 초안",
+    "openedPublished": "게시본",
+    "syncPillStartsFromPublished": "게시본 v{{version}} · 고치면 새 초안이 생깁니다",
+    "syncPillStartsFromVersion": "이전 버전에서 시작 · 고치면 새 초안이 생깁니다",
+    "endedDraftReason": {
+      "merged": "병합되어 끝났습니다",
+      "rejected": "리뷰에서 거절되어 끝났습니다",
+      "discarded": "폐기되어 끝났습니다"
+    },
     "neverPublishedIndicator": "아직 게시되지 않았습니다. 게시하기 전까지 이 초안은 편집자에게만 보입니다.",
     "unpublishedChangesIndicator": "게시되지 않은 변경 사항이 초안으로 저장되었으며 아직 독자에게 보이지 않습니다.",
     "publishedReviewCompleted": "게시하고 리뷰 요청을 완료했습니다.",

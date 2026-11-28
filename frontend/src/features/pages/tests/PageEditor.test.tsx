@@ -260,7 +260,7 @@ function mockPublicationFlow({
   rejectPublishWithoutOverride?: boolean;
   publishResponse?: Promise<Response>;
   rejectWarnings?: { code: string; message: string }[];
-  initialPage?: Partial<typeof page>;
+  initialPage?: Partial<typeof page> & { version_status?: string };
 } = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -1195,7 +1195,9 @@ describe("PageEditor", () => {
   });
 
   it("separates Save draft from exact-version Publish", async () => {
-    const fetchMock = mockPublicationFlow({ initialPage: { block_map_stale: true } });
+    // Re-saving rebuilds a stale block map only on a draft; a finished version
+    // is not copied into a draft without a change.
+    const fetchMock = mockPublicationFlow({ initialPage: { block_map_stale: true, version_status: "draft" } });
     const router = renderWithRouter(
       "/workspaces/11111111-1111-4111-8111-111111111111/context/pages/22222222-2222-4222-8222-222222222222/edit",
       <Route path="/workspaces/:workspaceId/context/pages/:pageId/edit" element={<RoutedPageEditor mode="edit" />} />,
@@ -1444,8 +1446,8 @@ describe("PageEditor", () => {
     ],
     [
       "a commit opened from the published page without starting a draft",
-      { version_status: "published_snapshot", current_published_version_id: "v1" },
-      /^saved$/i,
+      { version_status: "published_snapshot", current_published_version_id: "v1", published_version_no: 3 },
+      /^published v3 · your first change starts a draft$/i,
     ],
   ])(
     // PUB-09: the clean-state SyncPill used to say "Saved" for every
@@ -3657,7 +3659,9 @@ describe("PageEditor", () => {
       if (init?.method === "POST" && url.endsWith("/autosave")) {
         return pendingAutosave;
       }
-      return jsonResponse({ data: page });
+      // Opened from the published version: the save and the backstop may each
+      // start a draft, so they carry the editor session's one draft key.
+      return jsonResponse({ data: { ...page, version_status: "published_snapshot", current_published_version_id: page.version_id } });
     });
     const sendBeacon = vi.fn<(url: string, data?: BodyInit | null) => boolean>(() => true);
     Object.defineProperty(window.navigator, "sendBeacon", {
@@ -3679,6 +3683,10 @@ describe("PageEditor", () => {
     await waitFor(() => expect(autosaveCalls(fetchMock)).toHaveLength(1));
     expect(unloadAccepted).toBe(false);
     expect(sendBeacon).toHaveBeenCalledTimes(1);
+    const saved = JSON.parse(String(autosaveCalls(fetchMock)[0][1]?.body));
+    const backstop = JSON.parse(await readBlobText(sendBeacon.mock.calls[0][1] as Blob));
+    expect(saved).toMatchObject({ version_id: page.version_id, new_draft_key: expect.any(String) });
+    expect(backstop).toMatchObject({ version_id: page.version_id, new_draft_key: saved.new_draft_key });
 
     await act(async () => {
       resolveAutosave(jsonResponse({

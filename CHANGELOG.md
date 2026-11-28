@@ -110,6 +110,22 @@
   moved, the connection shows why it cannot be used and is reconnected from
   Edit (with a new key if one is stored).
 
+### Context drafts
+
+- Opening the editor no longer starts or reopens a draft. Edit joins the most
+  recently saved open draft that already contains the published version, or
+  starts from the published version; the first saved change starts one draft.
+  An editing link to a draft that has ended opens the same way and says so.
+  Drafts started from older versions open from History ("Edit this draft"),
+  and History "Start from this version" starts a draft only when a change is
+  saved.
+- A save onto a published, earlier or ended version that changes nothing
+  starts no draft (REST autosave and MCP `update_context_edit`). Request
+  review is offered only for a draft.
+- REST autosave and begin-edit accept an optional `new_draft_key`: requests
+  with the same key that start a draft from the same version (an editor's
+  saves, its close-time save, retries and uploads) reach one draft.
+
 ## 0.3.2 — 2026-11-21
 
 ### Important changes
